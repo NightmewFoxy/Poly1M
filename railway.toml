@@ -1,0 +1,11 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python main.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Mount a persistent volume at /data so positions.json and bot.log survive redeploys.
+# Create the volume in the Railway dashboard (Service -> Settings -> Volumes), mount path /data.
+# Then set the DATA_DIR env var to /data.
