@@ -305,6 +305,31 @@ def _tick_size_str(tick: float) -> str:
     return min(canonicals, key=lambda s: abs(float(s) - tick))
 
 
+async def get_market_meta(condition_id: str) -> dict[str, Any] | None:
+    """Ask the CLOB itself for a market's neg_risk and tick_size.
+
+    Gamma's `negRisk` is occasionally wrong, missing, or string-typed. CLOB's
+    response is the canonical source. Returns None on lookup failure (caller
+    falls back to the Gamma-derived values).
+    """
+    def _call() -> Any:
+        return clob().get_market(condition_id)
+
+    try:
+        info = await asyncio.to_thread(_call)
+    except Exception as exc:
+        log.warning("CLOB get_market(%s) failed: %s", condition_id, exc)
+        return None
+    if not isinstance(info, dict):
+        return None
+    return {
+        "neg_risk": bool(info.get("neg_risk", False)),
+        "tick_size": float(info.get("minimum_tick_size") or 0.01),
+        "enable_order_book": bool(info.get("enable_order_book", True)),
+        "accepting_orders": bool(info.get("accepting_orders", True)),
+    }
+
+
 async def place_market_buy(
     token_id: str,
     target_price: float,
@@ -328,7 +353,12 @@ async def place_market_buy(
         raise ValueError("computed zero share size")
 
     args = OrderArgs(token_id=token_id, price=limit_price, size=size_shares, side=BUY)
-    options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=_tick_size_str(tick_size))
+    tick_str = _tick_size_str(tick_size)
+    options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_str)
+    log.info(
+        "Signing order: token=%s price=%.4f size=%.2f neg_risk=%s tick=%s",
+        token_id, limit_price, size_shares, neg_risk, tick_str,
+    )
 
     def _call() -> Any:
         signed = clob().create_order(args, options=options)

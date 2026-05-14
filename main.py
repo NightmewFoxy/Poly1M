@@ -28,6 +28,7 @@ from polymarket_client import (
     discover_markets,
     filter_esports_tradeable,
     get_best_ask,
+    get_market_meta,
     place_market_buy,
 )
 from research import TradeIdea, potential_profit_net, research_and_score
@@ -194,13 +195,26 @@ async def run_cycle() -> None:
             log.info("Live price %.3f killed EV (%.1fc); skipping", live_ask, live_ev)
             continue
 
+        # Use CLOB as the authoritative source for neg_risk + tick_size.
+        # Gamma's negRisk is occasionally wrong or missing; CLOB never is.
+        meta = await get_market_meta(idea.market.condition_id)
+        if meta is not None:
+            order_neg_risk = meta["neg_risk"]
+            order_tick = meta["tick_size"]
+            if not meta.get("accepting_orders", True) or not meta.get("enable_order_book", True):
+                log.info("Market not accepting orders right now; skipping")
+                continue
+        else:
+            order_neg_risk = idea.market.neg_risk
+            order_tick = idea.market.tick_size
+
         try:
             fill = await place_market_buy(
                 token_id=idea.token_id,
                 target_price=live_ask,
                 stake_usd=config.STAKE_USD,
-                neg_risk=idea.market.neg_risk,
-                tick_size=idea.market.tick_size,
+                neg_risk=order_neg_risk,
+                tick_size=order_tick,
             )
         except GeoblockedError as exc:
             # No point trying the next idea this cycle — every order from this IP will 403.
