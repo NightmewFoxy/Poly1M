@@ -385,6 +385,25 @@ def _parse_is_live(m: dict) -> bool:
     return _truthy(m.get("live")) or _truthy(m.get("isLive"))
 
 
+async def fetch_market_live_status(condition_id: str) -> bool | None:
+    """Re-fetch a single market from Gamma and return its current live flag.
+
+    Used right before order placement so we trust Polymarket's *current*
+    event.live, not the snapshot taken at discovery (which can be tens of
+    minutes stale). Returns None if the lookup fails after retries — the
+    caller treats that as "can't verify, skip to be safe".
+    """
+    try:
+        raw = await _gamma_get("/markets", {"condition_ids": condition_id})
+    except Exception as exc:
+        log.warning("Fresh live-status lookup failed for %s: %s", condition_id, exc)
+        return None
+    for m in (raw or []):
+        if (m.get("conditionId") or "") == condition_id:
+            return _parse_is_live(m)
+    return None
+
+
 def _row_to_candidate(m: dict[str, Any]) -> MarketCandidate | None:
     try:
         token_ids = _parse_token_ids(m.get("clobTokenIds"))

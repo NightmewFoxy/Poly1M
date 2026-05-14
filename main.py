@@ -26,6 +26,7 @@ from polymarket_client import (
     GeoblockedError,
     MarketCandidate,
     discover_markets,
+    fetch_market_live_status,
     filter_esports_tradeable,
     get_best_ask,
     get_market_meta,
@@ -189,6 +190,25 @@ async def run_cycle() -> None:
         if idea.market.is_live():
             log.info(
                 "Match '%s' has gone live since discovery; skipping",
+                idea.market.question[:60],
+            )
+            continue
+
+        # Belt-and-suspenders: the cached event.live flag may be stale (set
+        # at discovery), and game_start_time can be missing entirely. Hit
+        # Gamma right now for the *current* live flag. If Gamma can't be
+        # reached after retries, refuse to trade — safer than guessing.
+        fresh_live = await fetch_market_live_status(idea.market.condition_id)
+        if fresh_live is True:
+            log.info(
+                "Fresh Gamma check: '%s' is currently live; skipping",
+                idea.market.question[:60],
+            )
+            continue
+        if fresh_live is None:
+            log.info(
+                "Couldn't verify live status from Gamma for '%s'; "
+                "skipping to avoid trading into a possibly-live match",
                 idea.market.question[:60],
             )
             continue
