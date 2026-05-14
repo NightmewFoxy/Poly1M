@@ -742,7 +742,29 @@ async def place_market_buy(
                 ) from exc
             raise
 
-    resp = await asyncio.to_thread(_do)
+    try:
+        resp = await asyncio.to_thread(_do)
+    except PolyApiException as exc:
+        # FOK/FAK time-in-force errors are the CLOB's way of saying "the book
+        # moved past your cap before this order landed" — same outcome as a
+        # zero-fill response, just delivered as a 400 instead of a payload.
+        # Map to NoFillError so the sniper treats it as a soft "tried, missed"
+        # instead of paging Telegram on every spike.
+        err_text = str(exc).lower()
+        status = getattr(exc, "status_code", None)
+        soft_miss_markers = (
+            "no orders found to match",   # FAK with empty match set
+            "fak orders are",              # generic FAK kill text
+            "fok orders are",              # FOK kill (legacy, in case server reverts)
+            "couldn't be fully filled",    # FOK
+            "couldn't be partially filled",
+        )
+        if status == 400 and any(s in err_text for s in soft_miss_markers):
+            raise NoFillError(
+                f"CLOB rejected order — book moved past cap "
+                f"(target={target_price}, cap={price_cap}): {exc}"
+            ) from exc
+        raise
     # Parse the CLOB response. v2 returns:
     #   {'makingAmount': '0.999999', 'takingAmount': '15.151514', 'status': 'matched', ...}
     # makingAmount = USDC spent; takingAmount = shares received.
