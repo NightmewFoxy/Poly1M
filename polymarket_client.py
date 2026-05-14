@@ -20,15 +20,20 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import (
+from py_clob_client_v2.client import ClobClient
+from py_clob_client_v2.clob_types import (
     ApiCreds,
-    OrderArgs,
+    OrderArgs,            # OrderArgsV2 alias
     OrderType,
     PartialCreateOrderOptions,
 )
-from py_clob_client.exceptions import PolyApiException
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client_v2.exceptions import PolyApiException
+from py_clob_client_v2.order_builder.constants import BUY
+from py_clob_client_v2.order_utils.model.signature_type_v2 import SignatureTypeV2
+from py_clob_client_v2.order_utils import exchange_order_builder_v2 as _eob_v2
+from eth_abi import encode as _abi_encode
+from eth_account import Account as _EthAccount
+from eth_utils import keccak as _keccak
 from tenacity import (
     retry,
     retry_if_exception,
@@ -116,6 +121,116 @@ class MarketCandidate:
 # ---------------------------------------------------------------------------
 # Client construction
 # ---------------------------------------------------------------------------
+
+
+def _patch_poly_1271_for_relayer_flow() -> None:
+    """Make py-clob-client-v2's POLY_1271 path work for relayer-key accounts.
+
+    The library assumes the user controls the deposit wallet's signing key
+    directly: it sets order.signer = funder (deposit wallet) and builds the
+    Solady inner domain with that same address as the verifying contract.
+
+    Polymarket Privy/Magic accounts split this in two: the user only has a
+    separate "Relayer API Key" private key whose EOA is authorized by the
+    deposit wallet's EIP-1271 implementation. For the CLOB's off-chain check
+    (`order.signer == API_KEY_EOA`) to pass we must set order.signer to the
+    relayer EOA. But the Solady inner domain still needs to reference the
+    deposit wallet (maker), since that's the contract whose isValidSignature
+    will verify the wrapped blob.
+
+    These two monkey-patches do exactly that:
+      1. OrderBuilder._v2_order_signer  -> returns signer.address() (relayer EOA)
+         even for POLY_1271.
+      2. ExchangeOrderBuilderV2._build_poly_1271_order_signature -> uses
+         message["maker"] (deposit wallet) instead of message["signer"] as the
+         Solady inner verifying contract.
+    """
+    from py_clob_client_v2.order_builder.builder import OrderBuilder as _OB
+
+    def _v2_order_signer_relayer(self) -> str:
+        # For POLY_1271 the library returns self.funder; we always want the
+        # actual EOA derived from the relayer PK so it matches the API key.
+        return self.signer.address()
+
+    _OB._v2_order_signer = _v2_order_signer_relayer
+
+    _ORDER_TYPE_HASH = _eob_v2.ORDER_TYPE_HASH
+    _SOLADY_TYPE_HASH = _eob_v2.SOLADY_TYPE_HASH
+    _DEPOSIT_WALLET_NAME_HASH = _eob_v2.DEPOSIT_WALLET_NAME_HASH
+    _DEPOSIT_WALLET_VERSION_HASH = _eob_v2.DEPOSIT_WALLET_VERSION_HASH
+    _DEPOSIT_WALLET_DOMAIN_SALT = _eob_v2.DEPOSIT_WALLET_DOMAIN_SALT
+    _hex_to_bytes32 = _eob_v2._hex_to_bytes32
+    _bytes32 = _eob_v2._bytes32
+
+    def _build_poly_1271_relayer(self, typed_data: dict) -> str:
+        message = typed_data["message"]
+        # The order's "signer" field carries the relayer EOA in our flow; the
+        # Solady inner domain's verifying contract must still be the wallet.
+        verifying_contract = message["maker"]
+        contents_hash = _keccak(
+            primitive=_abi_encode(
+                [
+                    "bytes32", "uint256", "address", "address", "uint256",
+                    "uint256", "uint256", "uint8", "uint8", "uint256",
+                    "bytes32", "bytes32",
+                ],
+                [
+                    _ORDER_TYPE_HASH,
+                    int(message["salt"]),
+                    message["maker"],
+                    message["signer"],
+                    int(message["tokenId"]),
+                    int(message["makerAmount"]),
+                    int(message["takerAmount"]),
+                    int(message["side"]),
+                    int(message["signatureType"]),
+                    int(message["timestamp"]),
+                    _bytes32(message["metadata"]),
+                    _bytes32(message["builder"]),
+                ],
+            )
+        )
+        typed_data_sign_struct_hash = _keccak(
+            primitive=_abi_encode(
+                [
+                    "bytes32", "bytes32", "bytes32", "bytes32",
+                    "uint256", "address", "bytes32",
+                ],
+                [
+                    _SOLADY_TYPE_HASH,
+                    contents_hash,
+                    _DEPOSIT_WALLET_NAME_HASH,
+                    _DEPOSIT_WALLET_VERSION_HASH,
+                    self.chain_id,
+                    verifying_contract,
+                    _DEPOSIT_WALLET_DOMAIN_SALT,
+                ],
+            )
+        )
+        digest = _keccak(
+            primitive=(
+                b"\x19\x01" + self.app_domain_separator + typed_data_sign_struct_hash
+            )
+        )
+        signed = _EthAccount._sign_hash(digest, private_key=self.signer.private_key)
+        inner_signature = signed.signature.hex()
+        if inner_signature.startswith("0x"):
+            inner_signature = inner_signature[2:]
+        contents_type = _eob_v2.ORDER_TYPE_STRING.encode("utf-8").hex()
+        contents_type_len = len(_eob_v2.ORDER_TYPE_STRING).to_bytes(2, "big").hex()
+        return (
+            "0x"
+            + inner_signature
+            + self.app_domain_separator.hex()
+            + contents_hash.hex()
+            + contents_type
+            + contents_type_len
+        )
+
+    _eob_v2.ExchangeOrderBuilderV2._build_poly_1271_order_signature = _build_poly_1271_relayer
+
+
+_patch_poly_1271_for_relayer_flow()
 
 
 def _build_clob_client() -> ClobClient:
@@ -280,7 +395,10 @@ def filter_esports_tradeable(
 
 
 async def get_best_ask(token_id: str) -> float | None:
-    """Best ask price for `token_id` in dollars (e.g. 0.62). None if no asks."""
+    """Best ask price for `token_id` in dollars (e.g. 0.62). None if no asks.
+
+    v2's `get_order_book` returns a dict shaped {"asks": [{"price","size"}, ...], "bids": [...]}.
+    """
     def _call() -> Any:
         return clob().get_order_book(token_id)
 
@@ -289,14 +407,18 @@ async def get_best_ask(token_id: str) -> float | None:
     except Exception as exc:
         log.warning("orderbook fetch failed for %s: %s", token_id, exc)
         return None
-    asks = getattr(book, "asks", None) or []
+    asks = book.get("asks") if isinstance(book, dict) else getattr(book, "asks", None)
     if not asks:
         return None
-    # py-clob-client returns asks sorted descending; best ask is the lowest price.
-    try:
-        prices = [float(a.price) for a in asks]
-    except (AttributeError, ValueError):
-        return None
+    prices: list[float] = []
+    for a in asks:
+        try:
+            if isinstance(a, dict):
+                prices.append(float(a["price"]))
+            else:
+                prices.append(float(a.price))
+        except (AttributeError, ValueError, KeyError):
+            continue
     return min(prices) if prices else None
 
 

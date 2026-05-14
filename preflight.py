@@ -117,7 +117,7 @@ def check_polymarket_auth() -> None:
 
     print("      USDC balance")
     try:
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
         params = BalanceAllowanceParams(
             asset_type=AssetType.COLLATERAL,
             signature_type=config.POLYMARKET_SIGNATURE_TYPE,

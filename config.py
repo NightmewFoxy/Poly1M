@@ -40,7 +40,13 @@ POLYMARKET_API_SECRET = _req("POLYMARKET_API_SECRET")
 POLYMARKET_API_PASSPHRASE = _req("POLYMARKET_API_PASSPHRASE")
 POLYMARKET_WALLET_PRIVATE_KEY = _req("POLYMARKET_WALLET_PRIVATE_KEY")
 POLYMARKET_FUNDER_ADDRESS = _req("POLYMARKET_FUNDER_ADDRESS")
-POLYMARKET_SIGNATURE_TYPE = int(_opt("POLYMARKET_SIGNATURE_TYPE", "1"))
+# Signature types (py-clob-client-v2 SignatureTypeV2):
+#   0 = EOA              (maker == signer, ECDSA)
+#   1 = POLY_PROXY       (legacy Polymarket Magic.link proxy contract)
+#   2 = POLY_GNOSIS_SAFE (Polymarket browser wallet, Gnosis Safe)
+#   3 = POLY_1271        (EIP-1271 smart wallets - Privy/Magic embedded, default
+#                         for new accounts post Pectra/EIP-7702)
+POLYMARKET_SIGNATURE_TYPE = int(_opt("POLYMARKET_SIGNATURE_TYPE", "3"))
 
 CLOB_HOST = "https://clob.polymarket.com"
 GAMMA_HOST = "https://gamma-api.polymarket.com"

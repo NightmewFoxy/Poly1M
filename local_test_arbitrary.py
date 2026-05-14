@@ -13,15 +13,17 @@ import os
 import sys
 import traceback
 
-from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
+from py_clob_client_v2.order_builder.constants import BUY
 
-# Make sure we go DIRECT, not through IPRoyal, for local testing
-os.environ.pop("OUTBOUND_PROXY", None)
+import config  # noqa: E402 -- config.py reads OUTBOUND_PROXY from .env and exports HTTPS_PROXY
+# Force-clear proxy AFTER config import so this test goes DIRECT (the home IP
+# is not geoblocked; no point routing through IPRoyal and paying for it).
 os.environ.pop("HTTPS_PROXY", None)
 os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("https_proxy", None)
+os.environ.pop("http_proxy", None)
 
-import config
 from polymarket_client import (
     _tick_size_str,
     clob,

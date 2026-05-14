@@ -15,7 +15,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from py_clob_client.client import ClobClient
+from py_clob_client_v2.client import ClobClient
 
 load_dotenv()
 
@@ -37,7 +37,7 @@ client = ClobClient(
     signature_type=SIG_TYPE,
     funder=FUNDER,
 )
-creds = client.create_or_derive_api_creds()
+creds = client.create_or_derive_api_key()
 print()
 print("=== Polymarket CLOB API credentials ===")
 print(f"POLYMARKET_API_KEY={creds.api_key}")
