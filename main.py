@@ -199,6 +199,8 @@ async def run_cycle() -> None:
                 token_id=idea.token_id,
                 target_price=live_ask,
                 stake_usd=config.STAKE_USD,
+                neg_risk=idea.market.neg_risk,
+                tick_size=idea.market.tick_size,
             )
         except GeoblockedError as exc:
             # No point trying the next idea this cycle — every order from this IP will 403.

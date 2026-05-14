@@ -20,7 +20,12 @@ from typing import Any
 
 import httpx
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+from py_clob_client.clob_types import (
+    ApiCreds,
+    OrderArgs,
+    OrderType,
+    PartialCreateOrderOptions,
+)
 from py_clob_client.exceptions import PolyApiException
 from py_clob_client.order_builder.constants import BUY
 from tenacity import (
@@ -73,6 +78,9 @@ class MarketCandidate:
     no_price: float            # current "best ask" on NO
     category: str | None
     slug: str
+    neg_risk: bool             # Negative-Risk exchange contract vs standard CTF Exchange
+    tick_size: float           # min price increment ($0.01 most markets, $0.001 some)
+    enable_order_book: bool    # only CLOB-tradeable markets — AMM-only markets can't be ordered
 
     def hours_to_resolution(self) -> float:
         try:
@@ -165,6 +173,17 @@ def _parse_outcome_prices(raw: Any) -> list[float]:
     return []
 
 
+def _parse_tick_size(raw: Any) -> float:
+    """Gamma returns tick size as either a number or a stringified decimal."""
+    if raw is None:
+        return 0.01
+    try:
+        v = float(raw)
+        return v if v > 0 else 0.01
+    except (TypeError, ValueError):
+        return 0.01
+
+
 async def discover_markets() -> list[MarketCandidate]:
     """Fetch active, non-closed binary markets and return parsed candidates.
 
@@ -201,6 +220,9 @@ async def discover_markets() -> list[MarketCandidate]:
                     no_price=prices[1],
                     category=m.get("category"),
                     slug=m.get("slug") or "",
+                    neg_risk=bool(m.get("negRisk") or False),
+                    tick_size=_parse_tick_size(m.get("orderPriceMinTickSize")),
+                    enable_order_book=bool(m.get("enableOrderBook", True)),
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -217,6 +239,9 @@ def filter_esports_tradeable(
     kept: list[MarketCandidate] = []
     for m in markets:
         if not m.is_esports():
+            continue
+        if not m.enable_order_book:
+            # AMM-only market; can't place CLOB orders against it
             continue
         if m.volume_usd < config.MIN_VOLUME_USD:
             continue
@@ -259,22 +284,29 @@ async def get_best_ask(token_id: str) -> float | None:
     return min(prices) if prices else None
 
 
-def _round_price(price: float) -> float:
-    # Polymarket tick size is $0.01 for most markets, $0.001 for some. Use 3 decimals.
-    return round(price, 3)
+def _round_to_tick(price: float, tick: float) -> float:
+    """Snap price down to the nearest valid tick (must be a multiple of `tick`)."""
+    if tick <= 0:
+        return round(price, 4)
+    return round(round(price / tick) * tick, 6)
 
 
 async def place_market_buy(
     token_id: str,
     target_price: float,
     stake_usd: float,
+    neg_risk: bool = False,
+    tick_size: float = 0.01,
 ) -> dict[str, Any]:
-    """Place a marketable limit buy. Crosses the spread by up to 2 cents to ensure fill.
+    """Place a marketable limit buy. Crosses the spread by ~2 cents (tick-aligned) to ensure fill.
+
+    `neg_risk` must match the market's exchange: True for Neg-Risk markets, False
+    for the standard CTF Exchange. Wrong value -> CLOB returns order_version_mismatch.
 
     Returns the order response dict; raises on hard failure.
     """
-    # Buy at slightly above the best ask to fill immediately; cap at MAX_PRICE.
-    limit_price = min(_round_price(target_price + 0.02), config.MAX_PRICE)
+    # Buy slightly above the best ask to fill immediately; cap at MAX_PRICE.
+    limit_price = min(_round_to_tick(target_price + 0.02, tick_size), config.MAX_PRICE)
     if limit_price <= 0:
         raise ValueError(f"invalid limit price {limit_price}")
     size_shares = math.floor((stake_usd / limit_price) * 100) / 100  # 2 decimals
@@ -282,9 +314,10 @@ async def place_market_buy(
         raise ValueError("computed zero share size")
 
     args = OrderArgs(token_id=token_id, price=limit_price, size=size_shares, side=BUY)
+    options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_size)
 
     def _call() -> Any:
-        signed = clob().create_order(args)
+        signed = clob().create_order(args, options=options)
         # FOK = fill-or-kill; immediate execution at the limit, no resting order left behind.
         return clob().post_order(signed, OrderType.FOK)
 
