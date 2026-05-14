@@ -1,14 +1,20 @@
 """Sniper entry point. Runs as a separate process from main.py.
 
+Strategy (current): buy whichever side (UP or DOWN) of the active BTC 5m
+Polymarket market first reaches an ask of SNIPER_TRIGGER_PRICE. Polymarket-
+only trigger — no Binance dependency, no edge math.
+
 Tasks:
-  - Binance trade feed (sniper_binance.BinanceFeed) — populates rolling buffer
-  - Signal loop — wakes on each Binance tick, evaluates fire conditions
+  - Binance trade feed — kept running (informational only; not used as the
+    trigger). Cheap, gives us a live BTC tape in the logs.
+  - Signal poller — every 2 seconds, evaluates the price trigger via
+    get_active_market() + sniper_signal.evaluate().
   - Resolution poller — every SNIPER_RESOLUTION_POLL_SECONDS, settles closed
-    positions in sniper_positions.json
-  - Heartbeat — every SNIPER_HEARTBEAT_SECONDS, logs liveness
+    positions in sniper_positions.json.
+  - Heartbeat — every SNIPER_HEARTBEAT_SECONDS, logs liveness.
 
 Risk gates enforced before every order: SNIPER_ENABLED, SNIPER_DRY_RUN,
-daily loss limit, already-open position, cooldown, time-to-resolution.
+daily loss limit, already-open position, cooldown.
 """
 from __future__ import annotations
 
@@ -24,7 +30,7 @@ import sniper_signal
 from logger_setup import get_logger
 from polymarket_client import GeoblockedError, place_market_buy
 from sniper_binance import BinanceFeed
-from sniper_market import BtcMarketCache, get_btc_market_resolution
+from sniper_market import BtcMarket, get_active_market, get_btc_market_resolution
 from sniper_state import SniperState, build_position_record
 
 log = get_logger("sniper.main")
@@ -63,108 +69,124 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
 class Sniper:
     def __init__(self) -> None:
         self.state = SniperState()
-        self.market_cache = BtcMarketCache()
         self.feed = BinanceFeed()
-        self.last_fire_monotonic: float | None = None
-        self.signal_event = asyncio.Event()
-        self.eval_lock = asyncio.Lock()
         self.alerted_daily_limit = False
 
-    # ----- hot path -------------------------------------------------------
+    # ----- signal poller --------------------------------------------------
 
-    async def _on_tick(self) -> None:
-        # Cheap: just wake the signal loop. The loop coalesces bursts of
-        # ticks into single evaluations so we never queue work behind a slow
-        # HTTP call.
-        self.signal_event.set()
-
-    async def _signal_loop(self) -> None:
+    async def _signal_poller(self) -> None:
+        last_fire_ts = 0.0
+        tick = 0
         while not _shutdown.is_set():
+            tick += 1
             try:
-                await asyncio.wait_for(
-                    self.signal_event.wait(), timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                continue
-            self.signal_event.clear()
-            if self.eval_lock.locked():
-                # Another evaluation is already in flight; the event will
-                # be re-set by the next tick anyway.
-                continue
-            async with self.eval_lock:
-                try:
-                    await self._evaluate_and_maybe_fire()
-                except Exception:
-                    log.exception("signal evaluation crashed")
+                # Risk gates first — cheap, so they short-circuit before the
+                # orderbook HTTP fetch in get_active_market().
+                blocked_reason: str | None = None
+                if not scfg.SNIPER_ENABLED:
+                    blocked_reason = "SNIPER_ENABLED=false"
+                elif self.state.is_at_daily_limit():
+                    blocked_reason = (
+                        f"daily_limit_hit pnl={self.state.today_pnl():+.2f}"
+                    )
+                    if not self.alerted_daily_limit:
+                        self.alerted_daily_limit = True
+                        try:
+                            await snotif.notify_daily_limit_hit(
+                                self.state.today_pnl()
+                            )
+                        except Exception:
+                            log.exception("daily_limit notify failed")
+                elif self.state.has_open_position():
+                    blocked_reason = "open_position"
 
-    async def _evaluate_and_maybe_fire(self) -> None:
-        # Risk gates first — cheap and they short-circuit most ticks.
-        if not scfg.SNIPER_ENABLED:
-            return
+                # Reset daily-limit alert flag once a fresh UTC day rolls in.
+                if self.alerted_daily_limit and not self.state.is_at_daily_limit():
+                    self.alerted_daily_limit = False
 
-        if self.state.is_at_daily_limit():
-            if not self.alerted_daily_limit:
-                self.alerted_daily_limit = True
-                await snotif.notify_daily_limit_hit(self.state.today_pnl())
-            return
-        # Reset the alerted flag if a new UTC day rolls in.
-        if self.alerted_daily_limit and not self.state.is_at_daily_limit():
-            self.alerted_daily_limit = False
+                if blocked_reason is not None:
+                    if tick % 15 == 0:
+                        log.info("signal_poller blocked: %s", blocked_reason)
+                    await asyncio.sleep(2)
+                    continue
 
-        if self.state.has_open_position():
-            return
+                market = await get_active_market()
+                if market is None:
+                    if tick % 15 == 0:
+                        log.info("signal_poller: no active BTC 5m market found")
+                    await asyncio.sleep(2)
+                    continue
 
-        market = await self.market_cache.get()
-        if market is None:
-            return
+                decision = sniper_signal.evaluate(market, last_fire_ts)
+                if tick % 15 == 0:
+                    cooldown_remaining = max(
+                        0,
+                        scfg.SNIPER_COOLDOWN_SECONDS - (time.time() - last_fire_ts),
+                    )
+                    log.info(
+                        "signal_poller tick=%d up=%.3f down=%.3f trigger=%.2f "
+                        "cooldown=%.0fs decision=%s",
+                        tick, market.up_ask, market.down_ask,
+                        scfg.SNIPER_TRIGGER_PRICE, cooldown_remaining,
+                        decision.side if decision else "none",
+                    )
 
-        decision = await sniper_signal.evaluate(
-            self.feed, market, self.last_fire_monotonic
-        )
-        if not decision.fire:
-            return
+                if decision is not None:
+                    fired = await self._maybe_fire(market, decision)
+                    if fired:
+                        last_fire_ts = time.time()
+            except Exception:
+                log.exception("signal_poller error")
+            await asyncio.sleep(2)
 
-        await self._fire(market, decision)
+    # ----- order placement ------------------------------------------------
 
-    async def _fire(self, market, decision) -> None:
-        self.last_fire_monotonic = time.monotonic()
+    async def _maybe_fire(self, market: BtcMarket, decision) -> bool:
+        """Place the order (or log dry-run). Returns True if a fire happened
+        so the caller updates last_fire_ts (starts the cooldown window).
+        """
         log.info(
-            "FIRE %s @ ~%.4f | move=%+.3f%% | fair=%.3f | edge=%.2fc | "
-            "stake=$%.2f | dry_run=%s",
-            decision.side, decision.live_ask, decision.move_pct,
-            decision.expected_fair, decision.edge_cents,
+            "FIRE %s @ %.4f | trigger=%.2f | stake=$%.2f | dry_run=%s",
+            decision.side, decision.price, scfg.SNIPER_TRIGGER_PRICE,
             scfg.SNIPER_STAKE_USD, scfg.SNIPER_DRY_RUN,
         )
 
         if scfg.SNIPER_DRY_RUN:
-            await snotif.notify_fire(
-                side=decision.side,
-                target_price=decision.live_ask,
-                expected_fair=decision.expected_fair,
-                edge_cents=decision.edge_cents,
-                move_pct=decision.move_pct,
-                lookback_seconds=scfg.SNIPER_LOOKBACK_SECONDS,
-                stake_usd=scfg.SNIPER_STAKE_USD,
-                dry_run=True,
-            )
-            return
+            try:
+                await snotif.notify_would_fire(
+                    side=decision.side,
+                    price=decision.price,
+                    trigger=scfg.SNIPER_TRIGGER_PRICE,
+                    stake_usd=scfg.SNIPER_STAKE_USD,
+                )
+            except Exception:
+                log.exception("dry-run notify failed")
+            return True
 
         try:
             fill = await place_market_buy(
                 token_id=decision.token_id,
-                target_price=decision.live_ask,
+                target_price=decision.price,
                 stake_usd=scfg.SNIPER_STAKE_USD,
                 neg_risk=market.neg_risk,
                 tick_size=market.tick_size,
             )
         except GeoblockedError as exc:
             log.error("Geoblocked: %s", exc)
-            await snotif.notify_error("place_order_geoblock", str(exc))
-            return
+            try:
+                await snotif.notify_error("place_order_geoblock", str(exc))
+            except Exception:
+                log.exception("geoblock notify failed")
+            return False
         except Exception as exc:
             log.warning("Order placement failed: %s", exc)
-            await snotif.notify_error("place_order", f"{type(exc).__name__}: {exc}")
-            return
+            try:
+                await snotif.notify_error(
+                    "place_order", f"{type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                log.exception("error notify failed")
+            return False
 
         record = build_position_record(
             market_question=market.question,
@@ -172,28 +194,33 @@ class Sniper:
             side=decision.side,
             token_id=decision.token_id,
             fill=fill,
-            move_pct=decision.move_pct,
-            edge_cents=decision.edge_cents,
-            expected_fair=decision.expected_fair,
+            move_pct=0.0,
+            edge_cents=0.0,
+            expected_fair=None,
         )
         try:
             self.state.record_open(record)
         except Exception as exc:
             log.exception("Failed to persist sniper position; the order DID go through")
-            await snotif.notify_error("persist_position", f"{type(exc).__name__}: {exc}")
-        await snotif.notify_fire(
-            side=decision.side,
-            target_price=decision.live_ask,
-            expected_fair=decision.expected_fair,
-            edge_cents=decision.edge_cents,
-            move_pct=decision.move_pct,
-            lookback_seconds=scfg.SNIPER_LOOKBACK_SECONDS,
-            stake_usd=fill["stake_usd"],
-            fill_price=fill["limit_price"],
-            dry_run=False,
-        )
+            try:
+                await snotif.notify_error(
+                    "persist_position", f"{type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                log.exception("persist error notify failed")
 
-    # ----- background tasks ----------------------------------------------
+        try:
+            await snotif.notify_fire(
+                side=decision.side,
+                price=fill["limit_price"],
+                trigger=scfg.SNIPER_TRIGGER_PRICE,
+                stake_usd=fill["stake_usd"],
+            )
+        except Exception:
+            log.exception("fire notify failed")
+        return True
+
+    # ----- resolution polling --------------------------------------------
 
     async def _resolution_loop(self) -> None:
         while not _shutdown.is_set():
@@ -213,18 +240,7 @@ class Sniper:
         for pos in self.state.get_open_positions():
             cid = pos.get("condition_id") or ""
             up_token = pos.get("token_id") if pos.get("side") == "UP" else None
-            # We need the UP token id either way; recover it from cache if
-            # this position was DOWN. The cache is keyed by current-active
-            # market though, so as a fallback we fetch the market record
-            # fresh via _gamma_get inside get_btc_market_resolution and
-            # pass the UP token from the *position* if it matches.
             if up_token is None:
-                # Position is DOWN: we don't have UP token cached on the
-                # position record. The simplest recovery is to re-fetch the
-                # market and let get_btc_market_resolution flip the index;
-                # but get_btc_market_resolution wants up_token as an arg.
-                # We work around by asking the resolver in "winner unknown"
-                # mode: pass the DOWN token as up_token, then invert.
                 info = await get_btc_market_resolution(cid, pos["token_id"])
                 if info is not None and info.get("winner") is not None:
                     inverted = "DOWN" if info["winner"] == "UP" else "UP"
@@ -241,12 +257,17 @@ class Sniper:
             if resolved is None:
                 continue
             _record, won, pnl = resolved
-            await snotif.notify_resolution(
-                side=pos.get("side", "?"),
-                won=won,
-                pnl=pnl,
-                today_pnl=self.state.today_pnl(),
-            )
+            try:
+                await snotif.notify_resolution(
+                    side=pos.get("side", "?"),
+                    won=won,
+                    pnl=pnl,
+                    today_pnl=self.state.today_pnl(),
+                )
+            except Exception:
+                log.exception("resolution notify failed")
+
+    # ----- heartbeat -----------------------------------------------------
 
     async def _heartbeat_loop(self) -> None:
         while not _shutdown.is_set():
@@ -277,12 +298,11 @@ class Sniper:
             return
 
         log.info(
-            "Sniper starting | dry_run=%s | stake=$%s | threshold=%s%% in %ss | "
-            "cooldown=%ss | daily_limit=-$%s | min_edge=%sc",
+            "Sniper starting | dry_run=%s | stake=$%s | trigger=$%.2f | "
+            "cooldown=%ss | daily_limit=-$%s",
             scfg.SNIPER_DRY_RUN, scfg.SNIPER_STAKE_USD,
-            scfg.SNIPER_MOVE_THRESHOLD_PCT, scfg.SNIPER_LOOKBACK_SECONDS,
-            scfg.SNIPER_COOLDOWN_SECONDS, scfg.SNIPER_DAILY_LOSS_LIMIT_USD,
-            scfg.SNIPER_MIN_EDGE_CENTS,
+            scfg.SNIPER_TRIGGER_PRICE, scfg.SNIPER_COOLDOWN_SECONDS,
+            scfg.SNIPER_DAILY_LOSS_LIMIT_USD,
         )
 
         try:
@@ -290,9 +310,12 @@ class Sniper:
         except Exception as exc:
             log.warning("Startup notify failed: %s", exc)
 
-        self.feed.set_on_tick(self._on_tick)
+        # Binance feed is kept running for the live BTC tape (heartbeat
+        # surfaces it). The signal layer no longer consumes its events.
         feed_task = asyncio.create_task(self.feed.run(), name="binance_feed")
-        signal_task = asyncio.create_task(self._signal_loop(), name="signal_loop")
+        poller_task = asyncio.create_task(
+            self._signal_poller(), name="signal_poller"
+        )
         resolution_task = asyncio.create_task(
             self._resolution_loop(), name="resolution_loop"
         )
@@ -305,9 +328,9 @@ class Sniper:
         finally:
             log.info("Shutting down sniper")
             self.feed.stop()
-            for t in (feed_task, signal_task, resolution_task, heartbeat_task):
+            for t in (feed_task, poller_task, resolution_task, heartbeat_task):
                 t.cancel()
-            for t in (feed_task, signal_task, resolution_task, heartbeat_task):
+            for t in (feed_task, poller_task, resolution_task, heartbeat_task):
                 try:
                     await t
                 except (asyncio.CancelledError, Exception):

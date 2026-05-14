@@ -10,13 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import sniper_config as scfg
 from logger_setup import get_logger
-from polymarket_client import _gamma_get, get_market_meta
+from polymarket_client import _gamma_get, get_best_ask, get_market_meta
 
 log = get_logger("sniper.market")
 
@@ -32,6 +32,18 @@ class BtcMarket:
     down_token_id: str
     neg_risk: bool
     tick_size: float
+    # Populated by get_active_market() right before each signal evaluation.
+    up_ask: Optional[float] = field(default=None)
+    down_ask: Optional[float] = field(default=None)
+
+    # Aliases — the signal layer uses .up_token / .down_token for brevity.
+    @property
+    def up_token(self) -> str:
+        return self.up_token_id
+
+    @property
+    def down_token(self) -> str:
+        return self.down_token_id
 
     def seconds_to_end(self) -> float:
         return (self.end_dt - datetime.now(timezone.utc)).total_seconds()
@@ -204,6 +216,33 @@ async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
         neg_risk=bool(meta["neg_risk"]),
         tick_size=float(meta["tick_size"]),
     )
+
+
+# ---------------------------------------------------------------------------
+# Public: get_active_market — cached metadata + fresh asks for each side
+# ---------------------------------------------------------------------------
+
+
+_market_cache = BtcMarketCache()
+
+
+async def get_active_market() -> Optional[BtcMarket]:
+    """Returns the currently-tradeable BTC 5m market with `up_ask` and
+    `down_ask` freshly fetched from the CLOB orderbook. None if no active
+    market or if either ask lookup fails — we won't fire on a half-quote.
+    """
+    m = await _market_cache.get()
+    if m is None:
+        return None
+    up_ask, down_ask = await asyncio.gather(
+        get_best_ask(m.up_token_id),
+        get_best_ask(m.down_token_id),
+    )
+    if up_ask is None or down_ask is None:
+        return None
+    m.up_ask = up_ask
+    m.down_ask = down_ask
+    return m
 
 
 # ---------------------------------------------------------------------------

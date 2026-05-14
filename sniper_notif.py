@@ -23,7 +23,7 @@ async def notify_startup() -> None:
     mode = "DRY-RUN" if scfg.SNIPER_DRY_RUN else "LIVE"
     await _safe(
         f"SNIPER started [{mode}] | stake=${scfg.SNIPER_STAKE_USD:.2f} | "
-        f"threshold={scfg.SNIPER_MOVE_THRESHOLD_PCT:.2f}% in {scfg.SNIPER_LOOKBACK_SECONDS}s | "
+        f"trigger=${scfg.SNIPER_TRIGGER_PRICE:.2f} | "
         f"cooldown={scfg.SNIPER_COOLDOWN_SECONDS}s | "
         f"daily_limit=-${scfg.SNIPER_DAILY_LOSS_LIMIT_USD:.0f}"
     )
@@ -31,28 +31,25 @@ async def notify_startup() -> None:
 
 async def notify_fire(
     side: str,
-    target_price: float,
-    expected_fair: float,
-    edge_cents: float,
-    move_pct: float,
-    lookback_seconds: int,
+    price: float,
+    trigger: float,
     stake_usd: float,
-    fill_price: float | None = None,
-    dry_run: bool = False,
 ) -> None:
-    if dry_run:
-        prefix = "SNIPER WOULD-HAVE-FIRED"
-        price_part = f"@ {target_price:.3f}"
-    else:
-        prefix = "SNIPER FIRED"
-        price_part = (
-            f"@ {fill_price:.3f}" if fill_price is not None else f"@ ~{target_price:.3f}"
-        )
     await _safe(
-        f"{prefix}: BUY {side} {price_part} on BTC-5m | "
-        f"move={move_pct:+.3f}% in {lookback_seconds}s | "
-        f"fair~{expected_fair:.3f} | edge={edge_cents:.1f}c | "
-        f"stake=${stake_usd:.2f}"
+        f"SNIPER: BUY {side} @ {price:.3f} on BTC-5m "
+        f"(trigger {trigger:.2f}), stake=${stake_usd:.2f}"
+    )
+
+
+async def notify_would_fire(
+    side: str,
+    price: float,
+    trigger: float,
+    stake_usd: float,
+) -> None:
+    await _safe(
+        f"SNIPER (DRY): WOULD BUY {side} @ {price:.3f} on BTC-5m "
+        f"(trigger {trigger:.2f}), stake=${stake_usd:.2f}"
     )
 
 

@@ -25,8 +25,16 @@ def _bool(name: str, default: str) -> bool:
 
 
 SNIPER_ENABLED: bool = _bool("SNIPER_ENABLED", "true")
-SNIPER_DRY_RUN: bool = _bool("SNIPER_DRY_RUN", "true")
-SNIPER_STAKE_USD: float = float(_opt("SNIPER_STAKE_USD", "2"))
+# DRY_RUN default is now FALSE (live trading) — opt in to dry-run by setting
+# SNIPER_DRY_RUN=true. Explicit truthy-only parse so a typo (e.g. blank, "False",
+# "no") keeps the bot live rather than silently muting it.
+_dry = _opt("SNIPER_DRY_RUN", "false").strip().lower()
+SNIPER_DRY_RUN: bool = _dry in ("true", "1", "yes", "on")
+SNIPER_STAKE_USD: float = float(_opt("SNIPER_STAKE_USD", "5"))
+# Price-trigger strategy: buy the first side whose ask reaches this level.
+SNIPER_TRIGGER_PRICE: float = float(_opt("SNIPER_TRIGGER_PRICE", "0.69"))
+# Legacy Binance-move knobs — kept for compatibility with the still-running
+# Binance feed task, but no longer drive trade decisions.
 SNIPER_MOVE_THRESHOLD_PCT: float = float(_opt("SNIPER_MOVE_THRESHOLD_PCT", "0.3"))
 SNIPER_LOOKBACK_SECONDS: int = int(_opt("SNIPER_LOOKBACK_SECONDS", "20"))
 SNIPER_COOLDOWN_SECONDS: int = int(_opt("SNIPER_COOLDOWN_SECONDS", "60"))
