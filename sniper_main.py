@@ -1,23 +1,28 @@
 """Sniper entry point. Runs as a separate process from main.py.
 
 Strategy (current): for every consecutive BTC Up-or-Down 5m market, buy
-whichever side (UP or DOWN) has an ask sitting EXACTLY at
-SNIPER_TRIGGER_PRICE. If the book has already moved past the trigger we do
-NOT chase — we wait for the price to settle back. The open-position gate
-is per-market (condition_id), so a still-resolving position on market A
-does not block sniping market B.
+whichever side (UP or DOWN) has an ask sitting in the trigger window
+[SNIPER_TRIGGER_PRICE - N*tick, SNIPER_TRIGGER_PRICE + N*tick] (where N =
+SNIPER_TRIGGER_TOLERANCE_TICKS). If the book has moved past the window we
+do NOT chase — we wait for the ask to settle back inside. The
+open-position gate is per-market (condition_id), so a still-resolving
+position on market A does not block sniping market B.
 
 Tasks:
   - Binance trade feed — kept running (informational only; not used as the
     trigger). Cheap, gives us a live BTC tape in the logs.
-  - Signal poller — every 2 seconds, evaluates the price trigger via
-    get_active_market() + sniper_signal.evaluate().
+  - WS orderbook stream (sniper_orderbook.OrderbookStream) — subscribes
+    to the active market's UP+DOWN tokens, maintains live best ask in
+    memory. Started in `_ensure_book_stream` and rotated on market rollover.
+  - Signal poller — every SNIPER_POLL_INTERVAL_SECONDS, reads the WS-cached
+    asks (falls back to REST asks on the cached BtcMarket if WS hasn't
+    seeded yet) and evaluates the trigger.
   - Resolution poller — every SNIPER_RESOLUTION_POLL_SECONDS, settles closed
     positions in sniper_positions.json.
   - Heartbeat — every SNIPER_HEARTBEAT_SECONDS, logs liveness.
 
 Risk gates enforced before every order: SNIPER_ENABLED, SNIPER_DRY_RUN,
-daily loss limit, already-open position, cooldown.
+daily loss limit, already-open position (per-market), cooldown (per-market).
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ from logger_setup import get_logger
 from polymarket_client import GeoblockedError, place_market_buy
 from sniper_binance import BinanceFeed
 from sniper_market import BtcMarket, get_active_market, get_btc_market_resolution
+from sniper_orderbook import OrderbookStream
 from sniper_state import SniperState, build_position_record
 
 log = get_logger("sniper.main")
@@ -74,6 +80,46 @@ class Sniper:
         self.state = SniperState()
         self.feed = BinanceFeed()
         self.alerted_daily_limit = False
+        # WS orderbook stream for the currently-active BTC 5m market. Lazily
+        # (re)created when the active market's condition_id changes.
+        self.book_stream: "OrderbookStream | None" = None
+
+    async def _ensure_book_stream(self, market: BtcMarket) -> None:
+        """Start a WS stream for `market` if we don't have one yet, or swap to
+        a new one when the active market rolls over."""
+        if (
+            self.book_stream is not None
+            and self.book_stream.condition_id == market.condition_id
+        ):
+            return
+        if self.book_stream is not None:
+            log.info(
+                "WS orderbook: rolling over %s -> %s",
+                self.book_stream.condition_id[:10], market.condition_id[:10],
+            )
+            await self.book_stream.stop()
+            self.book_stream = None
+        stream = OrderbookStream(
+            up_token_id=market.up_token_id,
+            down_token_id=market.down_token_id,
+            condition_id=market.condition_id,
+        )
+        await stream.start()
+        self.book_stream = stream
+
+    def _live_asks(self, market: BtcMarket) -> tuple[float | None, float | None]:
+        """Prefer WS-derived asks (low-latency). If WS hasn't seeded yet, fall
+        back to the REST-fetched asks already on the BtcMarket."""
+        s = self.book_stream
+        if s is None or not s.connected:
+            return market.up_ask, market.down_ask
+        up = s.latest_up_ask
+        down = s.latest_down_ask
+        if up is None:
+            up = market.up_ask
+        if down is None:
+            down = market.down_ask
+        return up, down
 
     # ----- signal poller --------------------------------------------------
 
@@ -84,6 +130,9 @@ class Sniper:
         last_fire_ts = 0.0
         last_fire_market: str | None = None
         tick = 0
+        poll_interval = scfg.SNIPER_POLL_INTERVAL_SECONDS
+        # Heartbeat-log every ~30s regardless of poll cadence.
+        log_every_n = max(1, int(round(30.0 / max(poll_interval, 0.01))))
         while not _shutdown.is_set():
             tick += 1
             try:
@@ -110,16 +159,16 @@ class Sniper:
                     self.alerted_daily_limit = False
 
                 if blocked_reason is not None:
-                    if tick % 15 == 0:
+                    if tick % log_every_n == 0:
                         log.info("signal_poller blocked: %s", blocked_reason)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(poll_interval)
                     continue
 
                 market = await get_active_market()
                 if market is None:
-                    if tick % 15 == 0:
+                    if tick % log_every_n == 0:
                         log.info("signal_poller: no active BTC 5m market found")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(poll_interval)
                     continue
 
                 # Drop cooldown the moment the active market rolls over —
@@ -129,29 +178,44 @@ class Sniper:
                     last_fire_ts = 0.0
                     last_fire_market = None
 
+                # Start (or swap) the WS orderbook stream for this market.
+                await self._ensure_book_stream(market)
+
                 # Per-market open-position gate: skip THIS market only if we
                 # already have a position on it. Open positions on previous
                 # (still-resolving) markets must NOT block sniping the next one.
                 if self.state.has_open_position_on(market.condition_id):
-                    if tick % 15 == 0:
+                    if tick % log_every_n == 0:
                         log.info(
                             "signal_poller: already filled on %s — waiting for resolution",
                             market.slug or market.condition_id[:10],
                         )
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(poll_interval)
                     continue
 
+                # Prefer the WS-derived asks (real-time). REST-fetched asks on
+                # the cached BtcMarket are the fallback for early ticks before
+                # WS has seeded its book.
+                up_ask, down_ask = self._live_asks(market)
+                market.up_ask = up_ask
+                market.down_ask = down_ask
+
                 decision = sniper_signal.evaluate(market, last_fire_ts)
-                if tick % 15 == 0:
+                if tick % log_every_n == 0:
                     cooldown_remaining = max(
                         0,
                         scfg.SNIPER_COOLDOWN_SECONDS - (time.time() - last_fire_ts),
                     )
+                    ws_status = (
+                        "ws" if (self.book_stream is not None and self.book_stream.connected)
+                        else "rest"
+                    )
                     log.info(
-                        "signal_poller tick=%d market=%s up=%.3f down=%.3f trigger=%.2f "
-                        "cooldown=%.0fs decision=%s",
-                        tick, market.slug or market.condition_id[:10],
-                        market.up_ask, market.down_ask,
+                        "signal_poller tick=%d market=%s src=%s up=%s down=%s "
+                        "trigger=%.2f cooldown=%.0fs decision=%s",
+                        tick, market.slug or market.condition_id[:10], ws_status,
+                        f"{up_ask:.3f}" if up_ask is not None else "none",
+                        f"{down_ask:.3f}" if down_ask is not None else "none",
                         scfg.SNIPER_TRIGGER_PRICE, cooldown_remaining,
                         decision.side if decision else "none",
                     )
@@ -163,7 +227,7 @@ class Sniper:
                         last_fire_market = market.condition_id
             except Exception:
                 log.exception("signal_poller error")
-            await asyncio.sleep(2)
+            await asyncio.sleep(poll_interval)
 
     # ----- order placement ------------------------------------------------
 
@@ -355,6 +419,12 @@ class Sniper:
         finally:
             log.info("Shutting down sniper")
             self.feed.stop()
+            if self.book_stream is not None:
+                try:
+                    await self.book_stream.stop()
+                except Exception:
+                    log.exception("book_stream stop failed")
+                self.book_stream = None
             for t in (feed_task, poller_task, resolution_task, heartbeat_task):
                 t.cancel()
             for t in (feed_task, poller_task, resolution_task, heartbeat_task):

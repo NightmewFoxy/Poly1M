@@ -31,8 +31,19 @@ SNIPER_ENABLED: bool = _bool("SNIPER_ENABLED", "true")
 _dry = _opt("SNIPER_DRY_RUN", "false").strip().lower()
 SNIPER_DRY_RUN: bool = _dry in ("true", "1", "yes", "on")
 SNIPER_STAKE_USD: float = float(_opt("SNIPER_STAKE_USD", "5"))
-# Price-trigger strategy: buy the first side whose ask reaches this level.
+# Price-trigger strategy: buy the first side whose ask sits inside the
+# trigger window (centered on SNIPER_TRIGGER_PRICE, ±SNIPER_TRIGGER_TOLERANCE_TICKS).
 SNIPER_TRIGGER_PRICE: float = float(_opt("SNIPER_TRIGGER_PRICE", "0.69"))
+# How many ticks above/below SNIPER_TRIGGER_PRICE still counts as "at the
+# trigger". 1 tick (= $0.01 at tick_size 0.01) means [0.68, 0.70] all fire
+# when trigger is 0.69. Set to 0 for exact-only.
+SNIPER_TRIGGER_TOLERANCE_TICKS: int = int(_opt("SNIPER_TRIGGER_TOLERANCE_TICKS", "1"))
+# Signal poll interval. The previous 2.0s was missing fast-moving markets
+# where the ask stepped through the trigger between polls. 0.5s gives 4x
+# coverage and stays well under the CLOB REST rate limit (the WS orderbook
+# stream handles the fast path; REST is the fallback). Set lower at your
+# own risk — iproyal bandwidth + CLOB rate limits both scale with this.
+SNIPER_POLL_INTERVAL_SECONDS: float = float(_opt("SNIPER_POLL_INTERVAL_SECONDS", "0.5"))
 # Max slippage above target_price (in ticks) before the CLOB FOK-kills.
 # The esports bot uses 2 ticks because it can afford to walk away; a sniper
 # usually catches a moving book and 2 ticks of headroom isn't enough to fill
