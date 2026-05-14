@@ -9,6 +9,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# --- Outbound proxy (Polymarket geoblocks Railway and most cloud IPs) ---
+# If OUTBOUND_PROXY is set (e.g. http://user:pass@host:port), export it as the
+# standard HTTPS_PROXY/HTTP_PROXY env vars *before* requests/httpx initialise
+# their sessions. py-clob-client uses `requests.request()`, which honours these
+# vars via trust_env=True; httpx's AsyncClient does the same by default.
+_OUTBOUND_PROXY = os.getenv("OUTBOUND_PROXY") or os.getenv("POLYMARKET_PROXY_URL")
+if _OUTBOUND_PROXY:
+    os.environ["HTTPS_PROXY"] = _OUTBOUND_PROXY
+    os.environ["HTTP_PROXY"] = _OUTBOUND_PROXY
+    os.environ.setdefault("https_proxy", _OUTBOUND_PROXY)
+    os.environ.setdefault("http_proxy", _OUTBOUND_PROXY)
+OUTBOUND_PROXY = _OUTBOUND_PROXY or ""
+
+
 def _req(name: str) -> str:
     val = os.getenv(name)
     if not val:

@@ -23,6 +23,7 @@ import positions
 import telegram_notif as tg
 from logger_setup import get_logger
 from polymarket_client import (
+    GeoblockedError,
     MarketCandidate,
     discover_markets,
     filter_esports_tradeable,
@@ -196,6 +197,11 @@ async def run_cycle() -> None:
                 target_price=live_ask,
                 stake_usd=config.STAKE_USD,
             )
+        except GeoblockedError as exc:
+            # No point trying the next idea this cycle — every order from this IP will 403.
+            log.error("Geoblocked by Polymarket CLOB: %s", exc)
+            await _safe_notify("place_order_geoblock", exc)
+            return
         except Exception as exc:
             log.warning("Order placement failed for %s: %s", idea.market.question[:60], exc)
             await _safe_notify("place_order", exc)

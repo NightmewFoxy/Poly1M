@@ -32,8 +32,47 @@ def _fail(msg: str) -> None:
     sys.exit(1)
 
 
+async def check_egress_ip() -> None:
+    """Show the public IP/country the bot will use for Polymarket calls.
+
+    Polymarket blocks most cloud providers. If OUTBOUND_PROXY is set we go
+    through it; if the resulting country is in their blocklist (US, FR, SG,
+    most cloud DCs) trades will 403.
+    """
+    print("[2/6] Egress IP")
+    proxy = config.OUTBOUND_PROXY
+    if proxy:
+        # Mask credentials when echoing back
+        safe = proxy
+        if "@" in proxy:
+            scheme, rest = proxy.split("://", 1) if "://" in proxy else ("", proxy)
+            _, host = rest.split("@", 1)
+            safe = f"{scheme}://***@{host}" if scheme else f"***@{host}"
+        print(f"      OUTBOUND_PROXY set: {safe}")
+    else:
+        print("      OUTBOUND_PROXY not set; direct egress")
+    try:
+        async with httpx.AsyncClient(timeout=10) as ac:
+            r = await ac.get("https://ipapi.co/json/")
+            data = r.json() if r.status_code == 200 else {}
+    except Exception as exc:
+        print(f"      WARN  egress check failed: {exc}")
+        return
+    ip = data.get("ip", "?")
+    country = data.get("country_name") or data.get("country") or "?"
+    org = data.get("org") or ""
+    print(f"      egress IP={ip} country={country} org={org}".rstrip())
+    # Hint -- known Polymarket-blocked regions. Not exhaustive; see Polymarket docs.
+    blocked = {"United States", "US", "France", "FR", "Singapore", "SG", "Belgium", "BE",
+               "Poland", "PL", "Thailand", "TH"}
+    if any(b == country for b in blocked):
+        print(f"      WARN  {country} is on Polymarket's blocklist; trades will 403")
+    else:
+        _ok("egress region looks tradeable (verify against Polymarket's docs)")
+
+
 async def check_telegram() -> None:
-    print("[2/5] Telegram")
+    print("[3/6] Telegram")
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
     async with httpx.AsyncClient(timeout=15) as ac:
         r = await ac.post(
@@ -50,7 +89,7 @@ async def check_telegram() -> None:
 
 
 def check_anthropic() -> None:
-    print("[3/5] Anthropic")
+    print("[4/6] Anthropic")
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     try:
         resp = client.messages.create(
@@ -69,7 +108,7 @@ def check_anthropic() -> None:
 
 
 def check_polymarket_auth() -> None:
-    print("[4/5] Polymarket CLOB auth")
+    print("[5/6] Polymarket CLOB auth")
     try:
         keys = clob().get_api_keys()
     except Exception as exc:
@@ -102,7 +141,7 @@ def check_polymarket_auth() -> None:
 
 
 async def check_discovery() -> None:
-    print("[5/5] Polymarket discovery (Gamma)")
+    print("[6/6] Polymarket discovery (Gamma)")
     markets = await discover_markets()
     if not markets:
         _fail("Gamma returned zero markets -- check network")
@@ -110,7 +149,7 @@ async def check_discovery() -> None:
 
 
 def check_env() -> None:
-    print("[1/5] Env vars")
+    print("[1/6] Env vars")
     # config.py already validated; this just confirms the import didn't crash
     required = [
         "POLYMARKET_API_KEY", "POLYMARKET_API_SECRET", "POLYMARKET_API_PASSPHRASE",
@@ -127,6 +166,7 @@ def check_env() -> None:
 async def main() -> None:
     print("Poly1M preflight\n")
     check_env()
+    await check_egress_ip()
     await check_telegram()
     check_anthropic()
     check_polymarket_auth()

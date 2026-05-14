@@ -59,6 +59,38 @@ Claude+web-search research call. Watch `data/bot.log` and your Telegram chat.
    of deploy. The next cycle's discovery log will appear in Railway's `Logs`
    tab. First trade (if EV exists) lands within a few minutes.
 
+## Polymarket geoblock workaround
+
+Polymarket's **CLOB** (where orders are placed) blocks Railway and most
+other cloud-provider IPs even though the **Gamma** discovery endpoint is
+open. Symptom: discovery works, then `place_order` returns
+`PolyApiException[status_code=403, ... Trading restricted in your region]`.
+
+The bot detects this and exits the cycle cleanly instead of looping. To
+actually trade from Railway you need a proxy whose egress IP is in a
+permitted region. Set:
+
+```
+OUTBOUND_PROXY=http://user:pass@host:port
+```
+
+(or `POLYMARKET_PROXY_URL=...` — both are accepted). Anything you give it
+is exported as `HTTPS_PROXY` at process start, which both `requests` (used
+by `py-clob-client`) and `httpx` pick up automatically.
+
+Reasonable proxy options:
+- **Residential proxy** (Bright Data, Oxylabs, Smartproxy, IPRoyal) sticky
+  session pinned to a permitted country. Cheapest if you only fire ~10
+  trades per cycle.
+- **Self-hosted VPS** in a non-blocked region running tinyproxy / dante /
+  squid. Fixed monthly cost, fastest.
+- **Tailscale / cloudflared tunnel back to your home network** — your home
+  IP is already known to work. Set up a tinyproxy on your home machine
+  and expose it over Tailscale.
+
+Run `python preflight.py` from inside your Railway shell (or with the same
+env vars locally) to print the egress IP + country before trading.
+
 ## Tuning the strategy
 
 All numeric knobs are env vars (see `.env.example`):
@@ -80,7 +112,8 @@ All numeric knobs are env vars (see `.env.example`):
 - A single hallucinated probability estimate burns $10. Over time the
   variance is the variance, but a stack of correlated bad calls in one cycle
   can dent the bankroll faster than you'd think.
-- Polymarket sometimes restricts geos at trade time even if discovery worked.
-  Watch for `place_order` errors in the first cycle.
+- Polymarket geoblocks the CLOB on cloud IPs even though Gamma works. If
+  `place_order` returns a 403, see the "Polymarket geoblock workaround"
+  section above — `OUTBOUND_PROXY` is the fix.
 - `MAX_PRICE` is enforced both in candidate filtering and at the moment of
   order placement (live-price recheck). It cannot be exceeded.

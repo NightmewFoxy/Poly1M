@@ -21,13 +21,32 @@ from typing import Any
 import httpx
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+from py_clob_client.exceptions import PolyApiException
 from py_clob_client.order_builder.constants import BUY
 from tenacity import (
     retry,
+    retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
+
+# Friendlier name for predicate-style retry.
+tenacity_retry_if = retry_if_exception
+
+
+class GeoblockedError(RuntimeError):
+    """Polymarket CLOB refused the request because the egress IP is in a blocked region."""
+
+
+def _is_geoblock(exc: BaseException) -> bool:
+    if not isinstance(exc, PolyApiException):
+        return False
+    if getattr(exc, "status_code", None) != 403:
+        return False
+    msg = getattr(exc, "error_msg", "")
+    text = msg if isinstance(msg, str) else str(msg)
+    return "Trading restricted" in text or "geoblock" in text.lower()
 
 import config
 from logger_setup import get_logger
@@ -269,14 +288,26 @@ async def place_market_buy(
         # FOK = fill-or-kill; immediate execution at the limit, no resting order left behind.
         return clob().post_order(signed, OrderType.FOK)
 
+    def _is_retryable(exc: BaseException) -> bool:
+        # Geoblock is permanent until the egress IP changes — don't waste attempts.
+        return not isinstance(exc, GeoblockedError)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=15),
-        retry=retry_if_exception_type(Exception),
+        retry=tenacity_retry_if(_is_retryable),
         reraise=True,
     )
     def _do() -> Any:
-        return _call()
+        try:
+            return _call()
+        except PolyApiException as exc:
+            if _is_geoblock(exc):
+                raise GeoblockedError(
+                    "Polymarket CLOB returned 403 (region blocked). "
+                    "Set OUTBOUND_PROXY to a proxy in a permitted region."
+                ) from exc
+            raise
 
     resp = await asyncio.to_thread(_do)
     log.info(
