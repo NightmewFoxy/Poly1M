@@ -385,22 +385,30 @@ def _parse_is_live(m: dict) -> bool:
     return _truthy(m.get("live")) or _truthy(m.get("isLive"))
 
 
-async def fetch_market_live_status(condition_id: str) -> bool | None:
-    """Re-fetch a single market from Gamma and return its current live flag.
+async def fetch_market_trade_safety(condition_id: str) -> dict[str, bool] | None:
+    """Re-fetch a single market from Gamma and return fresh tradeability flags.
 
-    Used right before order placement so we trust Polymarket's *current*
-    event.live, not the snapshot taken at discovery (which can be tens of
-    minutes stale). Returns None if the lookup fails after retries — the
-    caller treats that as "can't verify, skip to be safe".
+    Used right before order placement so we trust Polymarket's *current* state
+    rather than the snapshot taken at discovery (which can be tens of minutes
+    stale). Returns a dict with `live`, `closed`, `archived`, `active`, or None
+    if the lookup fails after retries — the caller treats None as "can't
+    verify, skip to be safe".
     """
     try:
         raw = await _gamma_get("/markets", {"condition_ids": condition_id})
     except Exception as exc:
-        log.warning("Fresh live-status lookup failed for %s: %s", condition_id, exc)
+        log.warning("Fresh trade-safety lookup failed for %s: %s", condition_id, exc)
         return None
     for m in (raw or []):
         if (m.get("conditionId") or "") == condition_id:
-            return _parse_is_live(m)
+            return {
+                "live": _parse_is_live(m),
+                "closed": _truthy(m.get("closed")),
+                "archived": _truthy(m.get("archived")),
+                # `active` defaults to True when missing — we don't want to
+                # block trading on a field that Gamma sometimes omits.
+                "active": True if m.get("active") is None else _truthy(m.get("active")),
+            }
     return None
 
 

@@ -26,7 +26,7 @@ from polymarket_client import (
     GeoblockedError,
     MarketCandidate,
     discover_markets,
-    fetch_market_live_status,
+    fetch_market_trade_safety,
     filter_esports_tradeable,
     get_best_ask,
     get_market_meta,
@@ -196,20 +196,30 @@ async def run_cycle() -> None:
 
         # Belt-and-suspenders: the cached event.live flag may be stale (set
         # at discovery), and game_start_time can be missing entirely. Hit
-        # Gamma right now for the *current* live flag. If Gamma can't be
-        # reached after retries, refuse to trade — safer than guessing.
-        fresh_live = await fetch_market_live_status(idea.market.condition_id)
-        if fresh_live is True:
+        # Gamma right now for fresh live/closed/archived flags. If Gamma
+        # can't be reached after retries, refuse to trade — safer than
+        # guessing on any of these.
+        safety = await fetch_market_trade_safety(idea.market.condition_id)
+        if safety is None:
+            log.info(
+                "Couldn't verify trade safety from Gamma for '%s'; "
+                "skipping to avoid trading into a possibly-live or "
+                "possibly-resolved market",
+                idea.market.question[:60],
+            )
+            continue
+        if safety["live"]:
             log.info(
                 "Fresh Gamma check: '%s' is currently live; skipping",
                 idea.market.question[:60],
             )
             continue
-        if fresh_live is None:
+        if safety["closed"] or safety["archived"] or not safety["active"]:
             log.info(
-                "Couldn't verify live status from Gamma for '%s'; "
-                "skipping to avoid trading into a possibly-live match",
+                "Fresh Gamma check: '%s' has been closed/archived since "
+                "discovery (closed=%s archived=%s active=%s); skipping",
                 idea.market.question[:60],
+                safety["closed"], safety["archived"], safety["active"],
             )
             continue
 
@@ -238,17 +248,24 @@ async def run_cycle() -> None:
             continue
 
         # Use CLOB as the authoritative source for neg_risk + tick_size.
-        # Gamma's negRisk is occasionally wrong or missing; CLOB never is.
+        # Gamma's negRisk is occasionally wrong or missing — signing with a
+        # wrong neg_risk targets the wrong exchange contract and either
+        # fails or, worse, fills against the wrong contract. If CLOB
+        # doesn't answer, refuse to trade rather than fall back to Gamma's
+        # potentially-stale values.
         meta = await get_market_meta(idea.market.condition_id)
-        if meta is not None:
-            order_neg_risk = meta["neg_risk"]
-            order_tick = meta["tick_size"]
-            if not meta.get("accepting_orders", True) or not meta.get("enable_order_book", True):
-                log.info("Market not accepting orders right now; skipping")
-                continue
-        else:
-            order_neg_risk = idea.market.neg_risk
-            order_tick = idea.market.tick_size
+        if meta is None:
+            log.info(
+                "CLOB get_market(%s) returned no meta; refusing to fall "
+                "back to Gamma neg_risk/tick — skipping",
+                idea.market.condition_id,
+            )
+            continue
+        order_neg_risk = meta["neg_risk"]
+        order_tick = meta["tick_size"]
+        if not meta.get("accepting_orders", True) or not meta.get("enable_order_book", True):
+            log.info("Market not accepting orders right now; skipping")
+            continue
 
         if not config.TRADING_ENABLED:
             log.info(
