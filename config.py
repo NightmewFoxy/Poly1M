@@ -71,6 +71,15 @@ MAX_OPEN_POSITIONS = int(_opt("MAX_OPEN_POSITIONS", "10"))
 STAKE_USD = float(_opt("STAKE_USD", "10"))
 MIN_VOLUME_USD = float(_opt("MIN_VOLUME_USD", "10000"))
 MAX_PRICE = float(_opt("MAX_PRICE", "0.80"))
+# Floor on the price we'll buy: any side cheaper than this is almost certainly a
+# market that's already been decided. The CLOB keeps near-resolved markets open
+# at $0.001 for residual liquidity; pairing that with Claude's clamp at
+# true_prob_yes >= 0.02 produces wildly +EV phantom trades on dead outcomes.
+MIN_PRICE = float(_opt("MIN_PRICE", "0.05"))
+# Sanity cap on EV. Anything above this is almost always a stale/resolved market
+# fooling the EV formula -- a real soft-edge trade on Polymarket esports is in
+# the single-digit to low-double-digit cents-per-dollar range.
+MAX_EV_CENTS_PER_DOLLAR = float(_opt("MAX_EV_CENTS_PER_DOLLAR", "50"))
 MIN_HOURS_TO_RESOLUTION = float(_opt("MIN_HOURS_TO_RESOLUTION", "2"))
 POLYMARKET_FEE = float(_opt("POLYMARKET_FEE", "0.02"))
 

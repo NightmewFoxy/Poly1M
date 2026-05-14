@@ -188,11 +188,20 @@ async def run_cycle() -> None:
         if live_ask > config.MAX_PRICE:
             log.info("Live ask %.3f above max, skipping", live_ask)
             continue
+        if live_ask < config.MIN_PRICE:
+            log.info("Live ask %.4f below MIN_PRICE; likely resolved market; skipping",
+                     live_ask)
+            continue
         # If price moved against us enough to flip EV negative, skip.
         from research import ev_cents_per_dollar  # local import to avoid cycle at module load
         live_ev = ev_cents_per_dollar(idea.true_prob_side, live_ask)
         if live_ev <= 0:
             log.info("Live price %.3f killed EV (%.1fc); skipping", live_ask, live_ev)
+            continue
+        if live_ev > config.MAX_EV_CENTS_PER_DOLLAR:
+            log.info("EV %.1fc implausibly high (%.4f price, %.2f true prob); "
+                     "market probably resolved or glitched; skipping",
+                     live_ev, live_ask, idea.true_prob_side)
             continue
 
         # Use CLOB as the authoritative source for neg_risk + tick_size.

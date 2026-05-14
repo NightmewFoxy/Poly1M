@@ -394,9 +394,11 @@ def filter_esports_tradeable(
             continue
         if m.volume_usd < config.MIN_VOLUME_USD:
             continue
-        # We'll trade whichever side is cheaper, so require the *cheaper* side <= MAX_PRICE.
+        # We'll trade whichever side is cheaper, so require it to sit in
+        # [MIN_PRICE, MAX_PRICE]. Too-cheap (~$0.001) means the market is almost
+        # certainly already resolved; trading the dead side is just donating.
         cheaper = min(m.yes_price, m.no_price)
-        if cheaper <= 0 or cheaper > config.MAX_PRICE:
+        if cheaper <= 0 or cheaper < config.MIN_PRICE or cheaper > config.MAX_PRICE:
             continue
         if m.hours_to_resolution() < config.MIN_HOURS_TO_RESOLUTION:
             continue
