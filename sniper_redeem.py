@@ -31,7 +31,7 @@ from typing import Any, Optional
 
 from eth_account import Account as EthAccount
 from web3 import Web3
-from web3.exceptions import TransactionNotFound
+from web3.exceptions import ContractLogicError, TransactionNotFound
 
 import config as _shared
 from logger_setup import get_logger
@@ -106,6 +106,14 @@ _NEG_RISK_ADAPTER_ABI = [
 
 class RedeemerError(RuntimeError):
     """A redeem attempt failed in a way the caller should record."""
+
+
+class AlreadyRedeemedError(RedeemerError):
+    """Gas estimate reverted on the inner redeemPositions call — almost
+    always means the CTF tokens have already been burned (i.e. the user
+    redeemed via the UI, or a previous tx succeeded that we lost track of).
+    The loop treats this as a soft "no-op done" instead of paging an error.
+    """
 
 
 class Redeemer:
@@ -234,10 +242,19 @@ class Redeemer:
             gas_estimate = proxy.functions.proxy([proxy_call]).estimate_gas(
                 {"from": self._account.address}
             )
+        except ContractLogicError as exc:
+            # The inner redeemPositions call would revert. By far the most
+            # common reason: the CTF tokens for this position have already
+            # been burned (manual UI redeem, or a prior tx succeeded). The
+            # caller marks the record as redeemed-elsewhere and stops trying.
+            raise AlreadyRedeemedError(
+                f"redeem would revert (likely already redeemed) "
+                f"conditionId={condition_id}: {exc}"
+            ) from exc
         except Exception as exc:
+            # Something else: RPC outage, no MATIC balance, malformed call.
             raise RedeemerError(
-                f"gas estimate failed (likely the inner redeemPositions would "
-                f"revert — already redeemed?  conditionId={condition_id}): {exc}"
+                f"gas estimate failed for redeem(cond={condition_id}): {exc}"
             ) from exc
         tx_kwargs["gas"] = int(gas_estimate * 1.2)  # 20% headroom
 

@@ -91,10 +91,17 @@ class SniperState:
         return list(self._load()["open"])
 
     def get_pending_redemptions(self) -> list[dict[str, Any]]:
-        """Resolved-winning positions still flagged redeem_status='pending'."""
+        """Resolved-winning positions that still need an on-chain redeem.
+
+        A record qualifies if it won AND either has `redeem_status='pending'`
+        (the post-feature path) OR has no `redeem_status` field at all
+        (historical records from before auto-redeem shipped — backfilled
+        on first scan).
+        """
         return [
             r for r in self._load()["resolved"]
-            if r.get("won") and r.get("redeem_status") == "pending"
+            if r.get("won")
+            and r.get("redeem_status") in (None, "pending")
         ]
 
     def set_redeem_status(

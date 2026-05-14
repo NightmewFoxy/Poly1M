@@ -519,6 +519,18 @@ class Sniper:
                     side=side,
                     shares=shares,
                 )
+            except sniper_redeem.AlreadyRedeemedError as exc:
+                # Most likely the user clicked Redeem in the UI before
+                # auto-redeem shipped (or a prior tx we lost track of).
+                # Flag the record so we don't keep trying, no Telegram noise.
+                self.state.set_redeem_status(
+                    cond_id, token_id, "redeemed-external",
+                )
+                log.info(
+                    "Skipping redeem (already redeemed externally): cond=%s side=%s",
+                    cond_id[:10], side,
+                )
+                continue
             except Exception as exc:
                 self.state.set_redeem_status(
                     cond_id, token_id, "pending", increment_attempts=True,
