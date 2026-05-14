@@ -180,6 +180,19 @@ async def run_cycle() -> None:
         if qid in used_events:
             continue
 
+        # Re-check live status. The discovery filter ran minutes ago; a match
+        # can cross its start time during research/ranking inside this same
+        # cycle. is_live() compares the cached game_start_time to *now*, so
+        # calling it again here catches games that flipped to live mid-cycle.
+        # Claude's pre-match research is blind to in-game state — never trade
+        # into a live match.
+        if idea.market.is_live():
+            log.info(
+                "Match '%s' has gone live since discovery; skipping",
+                idea.market.question[:60],
+            )
+            continue
+
         # Re-check the live best ask right before sending the order.
         live_ask = await get_best_ask(idea.token_id)
         if live_ask is None:
