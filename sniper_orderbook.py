@@ -12,10 +12,12 @@ Event types we care about:
   book          full snapshot for one asset_id
   price_change  list of price-level deltas for one asset_id
 
-Inherits the HTTPS_PROXY env (set by config.py from OUTBOUND_PROXY) so the
-WS handshake goes through iproyal — same as our REST calls. The Binance feed
-explicitly bypasses with proxy=None; this module does NOT, because Polymarket
-geoblocks Railway.
+Connection routing: bypasses HTTPS_PROXY (iproyal) with `proxy=None`. The
+Polymarket geoblock applies to the *trading* CLOB REST API; the public
+market-data WS endpoint accepts handshakes from any IP, including Railway.
+We saw iproyal start returning HTTP 504 on the WS upgrade intermittently,
+so going direct removes that single point of failure from the live-asks
+path. REST trading still goes via iproyal (geoblock-protected).
 """
 from __future__ import annotations
 
@@ -101,12 +103,14 @@ class OrderbookStream:
         backoff = 1
         while not self._stop.is_set():
             try:
-                # Inherit HTTPS_PROXY (iproyal) — Polymarket geoblocks Railway.
+                # proxy=None: bypass iproyal. Market-data WS is not geoblocked
+                # and iproyal has been returning 504 on the WS upgrade.
                 async with websockets.connect(
                     WS_URL,
                     ping_interval=20,
                     ping_timeout=10,
                     open_timeout=15,
+                    proxy=None,
                 ) as ws:
                     sub = {
                         "type": "Market",
