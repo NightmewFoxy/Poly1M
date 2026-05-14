@@ -79,3 +79,29 @@ async def notify_error(where: str, err: str) -> None:
     if len(text) > 3500:
         text = text[:3500] + "..."
     await _safe(text)
+
+
+async def notify_redeem_submitted(
+    side: str, payout_usd: float, tx_hash: str
+) -> None:
+    await _safe(
+        f"SNIPER REDEEM submitted: {side} payout ~${payout_usd:.2f} | "
+        f"tx={tx_hash[:10]}..."
+    )
+
+
+async def notify_redeem_confirmed(
+    side: str, payout_usd: float, tx_hash: str
+) -> None:
+    await _safe(
+        f"SNIPER REDEEM confirmed: {side} ~${payout_usd:.2f} cashed | "
+        f"tx={tx_hash[:10]}..."
+    )
+
+
+async def notify_redeem_failed(
+    side: str, attempts: int, reason: str
+) -> None:
+    await _safe(
+        f"SNIPER REDEEM failed after {attempts} attempt(s) on {side}: {reason[:200]}"
+    )

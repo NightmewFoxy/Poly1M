@@ -59,6 +59,20 @@ SNIPER_DAILY_LOSS_LIMIT_USD: float = float(_opt("SNIPER_DAILY_LOSS_LIMIT_USD", "
 SNIPER_MIN_EDGE_CENTS: float = float(_opt("SNIPER_MIN_EDGE_CENTS", "3"))
 SNIPER_BINANCE_SYMBOL: str = _opt("SNIPER_BINANCE_SYMBOL", "btcusdt").lower()
 
+# On-chain auto-redeem (sniper_redeem.py). After each winning resolution
+# the bot submits a redeemPositions tx through the POLY_PROXY so the CTF
+# tokens convert back to USDC in the Polymarket Cash balance without
+# needing a manual UI click. Disable by setting SNIPER_AUTO_REDEEM=false.
+SNIPER_AUTO_REDEEM: bool = _bool("SNIPER_AUTO_REDEEM", "true")
+# How often the redeemer loop wakes to process pending redemptions.
+SNIPER_REDEEM_POLL_SECONDS: float = float(
+    _opt("SNIPER_REDEEM_POLL_SECONDS", "60")
+)
+# Max attempts per position before giving up + flagging redeem_status='failed'.
+SNIPER_REDEEM_MAX_ATTEMPTS: int = int(
+    _opt("SNIPER_REDEEM_MAX_ATTEMPTS", "5")
+)
+
 # Operational knobs (not in the spec, but needed for the loop). Keep defaults
 # sensible; only override if you know why.
 SNIPER_MARKET_CACHE_TTL_SECONDS: float = 30.0

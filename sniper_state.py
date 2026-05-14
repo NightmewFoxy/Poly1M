@@ -90,6 +90,40 @@ class SniperState:
     def get_open_positions(self) -> list[dict[str, Any]]:
         return list(self._load()["open"])
 
+    def get_pending_redemptions(self) -> list[dict[str, Any]]:
+        """Resolved-winning positions still flagged redeem_status='pending'."""
+        return [
+            r for r in self._load()["resolved"]
+            if r.get("won") and r.get("redeem_status") == "pending"
+        ]
+
+    def set_redeem_status(
+        self,
+        condition_id: str,
+        token_id: str,
+        status: str,
+        tx_hash: Optional[str] = None,
+        increment_attempts: bool = False,
+    ) -> bool:
+        """Mark a resolved record's redeem state. Matches by condition_id +
+        token_id since the same condition_id could theoretically appear twice
+        (different sides bought on the same market). Returns True on success.
+        """
+        data = self._load()
+        for r in data["resolved"]:
+            if (
+                r.get("condition_id") == condition_id
+                and r.get("token_id") == token_id
+            ):
+                r["redeem_status"] = status
+                if tx_hash is not None:
+                    r["redeem_tx_hash"] = tx_hash
+                if increment_attempts:
+                    r["redeem_attempts"] = int(r.get("redeem_attempts", 0)) + 1
+                self._save(data)
+                return True
+        return False
+
     def record_open(self, position: dict[str, Any]) -> None:
         data = self._load()
         data["open"].append(position)
@@ -131,12 +165,19 @@ class SniperState:
             else:
                 pnl = -stake
 
+        # redeem_status: "pending" if won + payout claim still on-chain,
+        # "skipped" if losing position (no USDC to claim, save gas),
+        # "redeemed" after a successful on-chain redemption,
+        # "submitted" if a tx is in flight, "failed" if a redeem attempt errored.
         resolved_record = {
             **pos,
             "resolved_at": resolved_at or _now_iso(),
             "winner": winner,
             "won": won,
             "pnl": round(pnl, 4),
+            "redeem_status": "pending" if won else "skipped",
+            "redeem_tx_hash": None,
+            "redeem_attempts": 0,
         }
         data["resolved"].append(resolved_record)
         if len(data["resolved"]) > 200:

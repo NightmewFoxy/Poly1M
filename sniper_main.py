@@ -30,7 +30,7 @@ import asyncio
 import signal
 import time
 import traceback
-from typing import Any
+from typing import Any, Optional
 
 import sniper_config as scfg
 import sniper_notif as snotif
@@ -46,6 +46,16 @@ from sniper_binance import BinanceFeed
 from sniper_market import BtcMarket, get_active_market_meta, get_btc_market_resolution
 from sniper_orderbook import OrderbookStream
 from sniper_state import SniperState, build_position_record
+
+try:
+    import sniper_redeem
+except Exception as _redeem_import_exc:
+    # Don't crash the whole sniper if web3 isn't installed yet — log and
+    # disable auto-redeem. The trading path doesn't depend on it.
+    sniper_redeem = None  # type: ignore[assignment]
+    _REDEEM_IMPORT_ERROR: Optional[str] = str(_redeem_import_exc)
+else:
+    _REDEEM_IMPORT_ERROR = None
 
 log = get_logger("sniper.main")
 
@@ -315,6 +325,9 @@ class Sniper:
             edge_cents=0.0,
             expected_fair=None,
         )
+        # Persist neg_risk on the position so the redeemer knows which
+        # contract (CTF vs NegRiskAdapter) to call after resolution.
+        record["neg_risk"] = bool(market.neg_risk)
         try:
             self.state.record_open(record)
         except Exception as exc:
@@ -384,6 +397,156 @@ class Sniper:
             except Exception:
                 log.exception("resolution notify failed")
 
+    # ----- on-chain redemption -------------------------------------------
+
+    async def _redeem_loop(self) -> None:
+        """Periodically submit redeem txs for resolved-won positions and
+        check receipts on already-submitted ones. Disabled if
+        SNIPER_AUTO_REDEEM=false or the redeem module failed to import.
+        """
+        if not scfg.SNIPER_AUTO_REDEEM:
+            log.info("SNIPER_AUTO_REDEEM=false; skipping redeem loop")
+            return
+        if sniper_redeem is None:
+            log.warning(
+                "sniper_redeem unavailable (import failed: %s); skipping",
+                _REDEEM_IMPORT_ERROR,
+            )
+            return
+
+        while not _shutdown.is_set():
+            try:
+                await self._process_redemptions_once()
+            except Exception:
+                log.exception("redeem loop iteration crashed")
+            try:
+                await asyncio.wait_for(
+                    _shutdown.wait(),
+                    timeout=scfg.SNIPER_REDEEM_POLL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+    async def _process_redemptions_once(self) -> None:
+        # Step 1: any in-flight (submitted but unconfirmed) txs — poll receipts.
+        data = self.state._load()  # noqa: SLF001 (intentional internal access)
+        for record in data.get("resolved", []):
+            if record.get("redeem_status") != "submitted":
+                continue
+            tx_hash = record.get("redeem_tx_hash")
+            if not tx_hash:
+                continue
+            try:
+                status = await sniper_redeem.get_receipt_status(tx_hash)
+            except Exception as exc:
+                log.warning(
+                    "receipt poll failed for %s: %s", tx_hash[:10], exc
+                )
+                continue
+            if status is None:
+                continue  # not mined yet
+            cond_id = record.get("condition_id", "")
+            token_id = record.get("token_id", "")
+            side = record.get("side", "?")
+            shares = float(record.get("shares", 0))
+            if status:
+                self.state.set_redeem_status(
+                    cond_id, token_id, "redeemed", tx_hash=tx_hash,
+                )
+                try:
+                    await snotif.notify_redeem_confirmed(
+                        side=side, payout_usd=shares, tx_hash=tx_hash,
+                    )
+                except Exception:
+                    log.exception("redeem_confirmed notify failed")
+                log.info(
+                    "Redeem confirmed: cond=%s side=%s payout=~$%.2f tx=%s",
+                    cond_id[:10], side, shares, tx_hash,
+                )
+            else:
+                attempts = int(record.get("redeem_attempts", 0))
+                # Receipt status 0 = reverted on-chain. Re-flag as pending so
+                # the submit-side of this loop can retry (until max attempts).
+                if attempts < scfg.SNIPER_REDEEM_MAX_ATTEMPTS:
+                    self.state.set_redeem_status(
+                        cond_id, token_id, "pending", tx_hash=None,
+                    )
+                    log.warning(
+                        "Redeem tx reverted (cond=%s tx=%s); will retry "
+                        "(attempts=%d/%d)",
+                        cond_id[:10], tx_hash, attempts,
+                        scfg.SNIPER_REDEEM_MAX_ATTEMPTS,
+                    )
+                else:
+                    self.state.set_redeem_status(
+                        cond_id, token_id, "failed", tx_hash=tx_hash,
+                    )
+                    try:
+                        await snotif.notify_redeem_failed(
+                            side=side, attempts=attempts,
+                            reason=f"tx {tx_hash[:10]} reverted",
+                        )
+                    except Exception:
+                        log.exception("redeem_failed notify failed")
+
+        # Step 2: pending positions (no tx submitted yet) — fire one tx each.
+        for record in list(self.state.get_pending_redemptions()):
+            cond_id = record.get("condition_id", "")
+            token_id = record.get("token_id", "")
+            side = record.get("side", "")
+            shares = float(record.get("shares", 0))
+            neg_risk = bool(record.get("neg_risk", True))  # default True (BTC 5m is neg-risk)
+            attempts = int(record.get("redeem_attempts", 0))
+            if attempts >= scfg.SNIPER_REDEEM_MAX_ATTEMPTS:
+                self.state.set_redeem_status(
+                    cond_id, token_id, "failed",
+                )
+                try:
+                    await snotif.notify_redeem_failed(
+                        side=side, attempts=attempts,
+                        reason="max attempts exceeded before send",
+                    )
+                except Exception:
+                    log.exception("redeem_failed notify failed")
+                continue
+            if shares <= 0 or not cond_id:
+                self.state.set_redeem_status(cond_id, token_id, "skipped")
+                continue
+            try:
+                tx_hash = await sniper_redeem.redeem_position(
+                    condition_id=cond_id,
+                    neg_risk=neg_risk,
+                    side=side,
+                    shares=shares,
+                )
+            except Exception as exc:
+                self.state.set_redeem_status(
+                    cond_id, token_id, "pending", increment_attempts=True,
+                )
+                log.warning(
+                    "Redeem submit failed (cond=%s attempt=%d): %s",
+                    cond_id[:10], attempts + 1, exc,
+                )
+                # Only Telegram on final failure to avoid noise.
+                if attempts + 1 >= scfg.SNIPER_REDEEM_MAX_ATTEMPTS:
+                    try:
+                        await snotif.notify_redeem_failed(
+                            side=side, attempts=attempts + 1, reason=str(exc),
+                        )
+                    except Exception:
+                        log.exception("redeem_failed notify failed")
+                continue
+            self.state.set_redeem_status(
+                cond_id, token_id, "submitted",
+                tx_hash=tx_hash, increment_attempts=True,
+            )
+            try:
+                await snotif.notify_redeem_submitted(
+                    side=side, payout_usd=shares, tx_hash=tx_hash,
+                )
+            except Exception:
+                log.exception("redeem_submitted notify failed")
+
     # ----- heartbeat -----------------------------------------------------
 
     async def _heartbeat_loop(self) -> None:
@@ -439,6 +602,9 @@ class Sniper:
         heartbeat_task = asyncio.create_task(
             self._heartbeat_loop(), name="heartbeat"
         )
+        redeem_task = asyncio.create_task(
+            self._redeem_loop(), name="redeem_loop"
+        )
 
         try:
             await _shutdown.wait()
@@ -451,9 +617,13 @@ class Sniper:
                 except Exception:
                     log.exception("book_stream stop failed")
                 self.book_stream = None
-            for t in (feed_task, poller_task, resolution_task, heartbeat_task):
+            tasks = (
+                feed_task, poller_task, resolution_task,
+                heartbeat_task, redeem_task,
+            )
+            for t in tasks:
                 t.cancel()
-            for t in (feed_task, poller_task, resolution_task, heartbeat_task):
+            for t in tasks:
                 try:
                     await t
                 except (asyncio.CancelledError, Exception):
