@@ -82,6 +82,11 @@ class SniperState:
     def has_open_position(self) -> bool:
         return len(self._load()["open"]) > 0
 
+    def has_open_position_on(self, condition_id: str) -> bool:
+        return any(
+            p.get("condition_id") == condition_id for p in self._load()["open"]
+        )
+
     def get_open_positions(self) -> list[dict[str, Any]]:
         return list(self._load()["open"])
 

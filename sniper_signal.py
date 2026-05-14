@@ -1,10 +1,13 @@
-"""Sniper signal: fire when either side's ask reaches SNIPER_TRIGGER_PRICE.
+"""Sniper signal: fire when either side's ask is AT SNIPER_TRIGGER_PRICE.
 
 Polymarket-only trigger. No Binance / no edge math / no fair-value heuristic.
 The caller polls the market (via get_active_market) on a short cadence and
 hands the resulting BtcMarket plus the timestamp of the last fire to
-`evaluate()`. If either UP or DOWN ask has crossed the trigger and we're
-past the cooldown window, we return a Decision; otherwise None.
+`evaluate()`.
+
+Trigger semantics: fire only when an ask is *exactly* at the trigger (within
+half a tick). If the book has already moved past the trigger, do NOT chase —
+wait for it to settle back to the trigger before firing.
 """
 from __future__ import annotations
 
@@ -21,13 +24,25 @@ class Decision:
     price: float     # observed ask at trigger time
 
 
+def _at_trigger(ask: float | None, trigger: float, tick_size: float) -> bool:
+    if ask is None:
+        return False
+    # Ask is quantized to the tick; accept anything within half a tick of the
+    # trigger so float jitter doesn't miss the exact match. Anything strictly
+    # above the trigger (next tick or higher) does NOT qualify.
+    tol = max(tick_size, 0.001) / 2
+    return abs(ask - trigger) < tol
+
+
 def evaluate(market, last_fire_ts: float) -> Decision | None:
     if market is None:
         return None
     if time.time() - last_fire_ts < scfg.SNIPER_COOLDOWN_SECONDS:
         return None
-    if market.up_ask is not None and market.up_ask >= scfg.SNIPER_TRIGGER_PRICE:
+    trigger = scfg.SNIPER_TRIGGER_PRICE
+    tick = getattr(market, "tick_size", 0.01) or 0.01
+    if _at_trigger(market.up_ask, trigger, tick):
         return Decision("UP", market.up_token, market.up_ask)
-    if market.down_ask is not None and market.down_ask >= scfg.SNIPER_TRIGGER_PRICE:
+    if _at_trigger(market.down_ask, trigger, tick):
         return Decision("DOWN", market.down_token, market.down_ask)
     return None

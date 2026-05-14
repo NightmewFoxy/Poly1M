@@ -1,8 +1,11 @@
 """Sniper entry point. Runs as a separate process from main.py.
 
-Strategy (current): buy whichever side (UP or DOWN) of the active BTC 5m
-Polymarket market first reaches an ask of SNIPER_TRIGGER_PRICE. Polymarket-
-only trigger — no Binance dependency, no edge math.
+Strategy (current): for every consecutive BTC Up-or-Down 5m market, buy
+whichever side (UP or DOWN) has an ask sitting EXACTLY at
+SNIPER_TRIGGER_PRICE. If the book has already moved past the trigger we do
+NOT chase — we wait for the price to settle back. The open-position gate
+is per-market (condition_id), so a still-resolving position on market A
+does not block sniping market B.
 
 Tasks:
   - Binance trade feed — kept running (informational only; not used as the
@@ -75,7 +78,11 @@ class Sniper:
     # ----- signal poller --------------------------------------------------
 
     async def _signal_poller(self) -> None:
+        # Cooldown is tracked per-market (condition_id). When the active 5m
+        # market rolls over we reset the cooldown so the new market can fire
+        # immediately, independent of when the previous one was fired.
         last_fire_ts = 0.0
+        last_fire_market: str | None = None
         tick = 0
         while not _shutdown.is_set():
             tick += 1
@@ -97,8 +104,6 @@ class Sniper:
                             )
                         except Exception:
                             log.exception("daily_limit notify failed")
-                elif self.state.has_open_position():
-                    blocked_reason = "open_position"
 
                 # Reset daily-limit alert flag once a fresh UTC day rolls in.
                 if self.alerted_daily_limit and not self.state.is_at_daily_limit():
@@ -117,6 +122,25 @@ class Sniper:
                     await asyncio.sleep(2)
                     continue
 
+                # Drop cooldown the moment the active market rolls over —
+                # otherwise a fire late in market A would block the start of
+                # market B.
+                if last_fire_market is not None and last_fire_market != market.condition_id:
+                    last_fire_ts = 0.0
+                    last_fire_market = None
+
+                # Per-market open-position gate: skip THIS market only if we
+                # already have a position on it. Open positions on previous
+                # (still-resolving) markets must NOT block sniping the next one.
+                if self.state.has_open_position_on(market.condition_id):
+                    if tick % 15 == 0:
+                        log.info(
+                            "signal_poller: already filled on %s — waiting for resolution",
+                            market.slug or market.condition_id[:10],
+                        )
+                    await asyncio.sleep(2)
+                    continue
+
                 decision = sniper_signal.evaluate(market, last_fire_ts)
                 if tick % 15 == 0:
                     cooldown_remaining = max(
@@ -124,9 +148,10 @@ class Sniper:
                         scfg.SNIPER_COOLDOWN_SECONDS - (time.time() - last_fire_ts),
                     )
                     log.info(
-                        "signal_poller tick=%d up=%.3f down=%.3f trigger=%.2f "
+                        "signal_poller tick=%d market=%s up=%.3f down=%.3f trigger=%.2f "
                         "cooldown=%.0fs decision=%s",
-                        tick, market.up_ask, market.down_ask,
+                        tick, market.slug or market.condition_id[:10],
+                        market.up_ask, market.down_ask,
                         scfg.SNIPER_TRIGGER_PRICE, cooldown_remaining,
                         decision.side if decision else "none",
                     )
@@ -135,6 +160,7 @@ class Sniper:
                     fired = await self._maybe_fire(market, decision)
                     if fired:
                         last_fire_ts = time.time()
+                        last_fire_market = market.condition_id
             except Exception:
                 log.exception("signal_poller error")
             await asyncio.sleep(2)
