@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -91,10 +92,25 @@ class MarketCandidate:
         return (end - now).total_seconds() / 3600.0
 
     def is_esports(self) -> bool:
+        # Word-boundary match so short tokens like "lec" / "lcs" / "esl" / "iem"
+        # don't fire on substrings ("lec" inside "election", "esl" inside "wrestler").
+        # Slugs use '-' as separator, so we treat '-' as a word boundary too.
         haystack = " ".join(
-            [self.question or "", self.category or "", self.slug or ""]
+            [self.question or "", self.category or "", (self.slug or "").replace("-", " ")]
         ).lower()
-        return any(kw in haystack for kw in config.ESPORTS_KEYWORDS)
+        tokens = set(re.findall(r"[a-z0-9]+", haystack))
+        for kw in config.ESPORTS_KEYWORDS:
+            kw_tokens = re.findall(r"[a-z0-9]+", kw.lower())
+            if not kw_tokens:
+                continue
+            if len(kw_tokens) == 1:
+                if kw_tokens[0] in tokens:
+                    return True
+            else:
+                # Multi-word keyword: require all tokens present (close-enough heuristic).
+                if all(t in tokens for t in kw_tokens):
+                    return True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +383,16 @@ async def place_market_buy(
 
     def _is_retryable(exc: BaseException) -> bool:
         # Geoblock is permanent until the egress IP changes — don't waste attempts.
-        return not isinstance(exc, GeoblockedError)
+        if isinstance(exc, GeoblockedError):
+            return False
+        # 4xx from CLOB means the request is *malformed* (bad signature, wrong fee
+        # rate, version mismatch, etc.). Retrying with the same signed body produces
+        # the same 4xx. Only retry transient network/5xx.
+        if isinstance(exc, PolyApiException):
+            code = getattr(exc, "status_code", None)
+            if isinstance(code, int) and 400 <= code < 500:
+                return False
+        return True
 
     @retry(
         stop=stop_after_attempt(3),

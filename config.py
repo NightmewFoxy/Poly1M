@@ -90,6 +90,7 @@ ESPORTS_KEYWORDS = (
     "pubg",
     "mobile legends", "mlbb",
     "fortnite",
-    "iem", "esl", "blast", "major", "the international", "ti12", "ti13", "ti14",
+    "iem", "esl", "blast", "the international", "ti12", "ti13", "ti14",
+    "cs major", "csgo major", "cs2 major", "esl major", "rlcs major",
     "worlds 2025", "worlds 2026", "msi 2025", "msi 2026",
 )
