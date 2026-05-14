@@ -170,6 +170,7 @@ class Sniper:
                 stake_usd=scfg.SNIPER_STAKE_USD,
                 neg_risk=market.neg_risk,
                 tick_size=market.tick_size,
+                max_slippage_ticks=scfg.SNIPER_MAX_SLIPPAGE_TICKS,
             )
         except GeoblockedError as exc:
             log.error("Geoblocked: %s", exc)

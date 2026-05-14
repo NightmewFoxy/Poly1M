@@ -33,6 +33,12 @@ SNIPER_DRY_RUN: bool = _dry in ("true", "1", "yes", "on")
 SNIPER_STAKE_USD: float = float(_opt("SNIPER_STAKE_USD", "5"))
 # Price-trigger strategy: buy the first side whose ask reaches this level.
 SNIPER_TRIGGER_PRICE: float = float(_opt("SNIPER_TRIGGER_PRICE", "0.69"))
+# Max slippage above target_price (in ticks) before the CLOB FOK-kills.
+# The esports bot uses 2 ticks because it can afford to walk away; a sniper
+# usually catches a moving book and 2 ticks of headroom isn't enough to fill
+# a $5 stake — the order kills with "couldn't be fully filled". Default to
+# 10 ticks ($0.10 at 0.01 tick) so most fires actually fill.
+SNIPER_MAX_SLIPPAGE_TICKS: int = int(_opt("SNIPER_MAX_SLIPPAGE_TICKS", "10"))
 # Legacy Binance-move knobs — kept for compatibility with the still-running
 # Binance feed task, but no longer drive trade decisions.
 SNIPER_MOVE_THRESHOLD_PCT: float = float(_opt("SNIPER_MOVE_THRESHOLD_PCT", "0.3"))
