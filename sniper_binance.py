@@ -74,8 +74,16 @@ class BinanceFeed:
         while not self._stop.is_set():
             try:
                 log.info("Connecting to Binance trade stream: %s", self.ws_url)
+                # proxy=None bypasses HTTPS_PROXY/HTTP_PROXY entirely. The
+                # OUTBOUND_PROXY env var is set for Polymarket geoblock
+                # avoidance on Railway, but Binance's public market data
+                # stream doesn't need it (and most cheap region-shifting
+                # proxies 403 the Binance handshake).
                 async with websockets.connect(
-                    self.ws_url, ping_interval=20, ping_timeout=10
+                    self.ws_url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    proxy=None,
                 ) as ws:
                     backoff = 1
                     log.info("Binance trade stream connected")

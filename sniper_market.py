@@ -120,6 +120,12 @@ class BtcMarketCache:
 
 
 async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
+    now = datetime.now(timezone.utc)
+    # Gamma caps the response at 100 rows. Without an end_date_min filter,
+    # the ascending-endDate result is full of stale "active but actually
+    # past" markets and the fresh ones get pushed off the page. Filter
+    # server-side to ending-in-the-future so the top of the list is the
+    # currently-tradeable 5-min slot.
     params = {
         "active": "true",
         "closed": "false",
@@ -127,6 +133,7 @@ async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
         "limit": "100",
         "order": "endDate",
         "ascending": "true",
+        "end_date_min": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     try:
         rows = await _gamma_get("/markets", params)
@@ -135,8 +142,6 @@ async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
         return None
     if not isinstance(rows, list):
         return None
-
-    now = datetime.now(timezone.utc)
     best: tuple[float, dict] | None = None
     for m in rows:
         slug = m.get("slug") or ""
