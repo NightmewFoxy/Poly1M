@@ -2,7 +2,10 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python main.py"
+# Runs the esports bot AND the BTC 5m sniper as sibling asyncio tasks in one
+# container. Both inherit OUTBOUND_PROXY (iproyal) so CLOB calls avoid the
+# Railway geoblock. See railway_main.py.
+startCommand = "python railway_main.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
