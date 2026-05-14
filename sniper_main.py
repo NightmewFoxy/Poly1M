@@ -115,31 +115,23 @@ class Sniper:
     async def _live_asks(
         self, market: BtcMarket
     ) -> tuple[float | None, float | None]:
-        """Return (up_ask, down_ask) preferring the WS stream. Per-side REST
-        fallback only when WS hasn't seeded yet — the common case (WS healthy)
-        does ZERO REST calls per poll."""
+        """Return (up_ask, down_ask) preferring the WS stream.
+
+        WS is the primary source. The REST fallback is ONLY used when the
+        WS task isn't connected at all — once `connected=True` we trust it
+        to deliver the book snapshot within a handful of ms and just return
+        (None, None) for the brief seed window. Hammering REST on every
+        0.5s tick while waiting for WS to seed turned the loop into a
+        15-30s-per-tick crawl when CLOB REST was also timing out.
+        """
         s = self.book_stream
-        ws_up = s.latest_up_ask if (s is not None and s.connected) else None
-        ws_down = s.latest_down_ask if (s is not None and s.connected) else None
-        if ws_up is not None and ws_down is not None:
-            return ws_up, ws_down
-        # Backfill the missing side(s) from REST in parallel.
-        need_up = ws_up is None
-        need_down = ws_down is None
-        if need_up and need_down:
-            rest_up, rest_down = await asyncio.gather(
-                get_best_ask(market.up_token_id),
-                get_best_ask(market.down_token_id),
-            )
-        else:
-            rest_up = (
-                await get_best_ask(market.up_token_id) if need_up else None
-            )
-            rest_down = (
-                await get_best_ask(market.down_token_id) if need_down else None
-            )
-        return (ws_up if ws_up is not None else rest_up,
-                ws_down if ws_down is not None else rest_down)
+        if s is not None and s.connected:
+            return s.latest_up_ask, s.latest_down_ask
+        rest_up, rest_down = await asyncio.gather(
+            get_best_ask(market.up_token_id),
+            get_best_ask(market.down_token_id),
+        )
+        return rest_up, rest_down
 
     # ----- signal poller --------------------------------------------------
 

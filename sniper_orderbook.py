@@ -54,6 +54,10 @@ class OrderbookStream:
         self._task: Optional[asyncio.Task] = None
         self._connected = False
         self._last_event_ts: float = 0.0
+        # Track first-book diagnostic so we can confirm data is flowing.
+        self._frames_seen = 0
+        self._seeded_up = False
+        self._seeded_down = False
 
     # -------- accessors --------------------------------------------------
 
@@ -146,6 +150,17 @@ class OrderbookStream:
         self._connected = False
 
     def _handle_frame(self, raw) -> None:
+        self._frames_seen += 1
+        # On the very first frame, log the raw payload (truncated) so we can
+        # see what Polymarket is actually sending if seeding stalls.
+        if self._frames_seen == 1:
+            preview = raw if isinstance(raw, (str, bytes)) else repr(raw)
+            if isinstance(preview, bytes):
+                preview = preview.decode("utf-8", "replace")
+            log.info(
+                "WS first frame (market=%s): %s",
+                self.condition_id[:10], preview[:300],
+            )
         try:
             payload = json.loads(raw)
         except (ValueError, TypeError):
@@ -182,8 +197,24 @@ class OrderbookStream:
                     new_asks[p] = s
             if target_name == "up":
                 self._up_asks = new_asks
+                if not self._seeded_up:
+                    self._seeded_up = True
+                    log.info(
+                        "WS UP book seeded (market=%s best_ask=%s levels=%d)",
+                        self.condition_id[:10],
+                        f"{min(new_asks):.3f}" if new_asks else "none",
+                        len(new_asks),
+                    )
             else:
                 self._down_asks = new_asks
+                if not self._seeded_down:
+                    self._seeded_down = True
+                    log.info(
+                        "WS DOWN book seeded (market=%s best_ask=%s levels=%d)",
+                        self.condition_id[:10],
+                        f"{min(new_asks):.3f}" if new_asks else "none",
+                        len(new_asks),
+                    )
             return
 
         if event_type in ("price_change", "pricechange"):
