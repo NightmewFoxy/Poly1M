@@ -196,6 +196,19 @@ def research_and_score(market: MarketCandidate) -> TradeIdea | None:
             research_cache.put(market.condition_id, market.yes_price, verdict)
         except Exception as exc:
             log.warning("research_cache write failed: %s", exc)
+
+    # Low-confidence verdicts mean Claude couldn't find recent info and
+    # (per the prompt) was instructed to anchor to the market price.
+    # Trading on these is essentially trading on noise — the EV is whatever
+    # rounding error Claude introduced relative to market_implied. Skip.
+    confidence = str(verdict.get("confidence", "medium")).lower()
+    if confidence == "low":
+        log.info(
+            "Skipping low-confidence verdict: %s",
+            market.question[:80],
+        )
+        return None
+
     true_p_yes = verdict["true_prob_yes"]
     true_p_no = 1.0 - true_p_yes
 

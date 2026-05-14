@@ -75,7 +75,7 @@ MAX_PRICE = float(_opt("MAX_PRICE", "0.80"))
 # market that's already been decided. The CLOB keeps near-resolved markets open
 # at $0.001 for residual liquidity; pairing that with Claude's clamp at
 # true_prob_yes >= 0.02 produces wildly +EV phantom trades on dead outcomes.
-MIN_PRICE = float(_opt("MIN_PRICE", "0.05"))
+MIN_PRICE = float(_opt("MIN_PRICE", "0.10"))
 # Sanity cap on EV. Anything above this is almost always a stale/resolved market
 # fooling the EV formula -- a real soft-edge trade on Polymarket esports is in
 # the single-digit to low-double-digit cents-per-dollar range.
