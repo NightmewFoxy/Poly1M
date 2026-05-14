@@ -34,7 +34,7 @@ POLYGON_CHAIN_ID = 137
 
 # --- Anthropic ---
 ANTHROPIC_API_KEY = _req("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = _opt("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+ANTHROPIC_MODEL = _opt("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 # --- Telegram ---
 TELEGRAM_BOT_TOKEN = _req("TELEGRAM_BOT_TOKEN")

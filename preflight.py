@@ -78,7 +78,12 @@ def check_polymarket_auth() -> None:
 
     print("      USDC balance")
     try:
-        bal = clob().get_balance_allowance({"asset_type": "COLLATERAL"})
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        params = BalanceAllowanceParams(
+            asset_type=AssetType.COLLATERAL,
+            signature_type=config.POLYMARKET_SIGNATURE_TYPE,
+        )
+        bal = clob().get_balance_allowance(params)
     except Exception as exc:
         # Not fatal; balance endpoint sometimes 404s for new accounts
         print(f"      WARN  balance lookup failed: {exc}")
