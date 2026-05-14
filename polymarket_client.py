@@ -88,6 +88,8 @@ class MarketCandidate:
     neg_risk: bool             # Negative-Risk exchange contract vs standard CTF Exchange
     tick_size: float           # min price increment ($0.01 most markets, $0.001 some)
     enable_order_book: bool    # only CLOB-tradeable markets — AMM-only markets can't be ordered
+    is_live_market: bool       # Gamma event.live flag — Polymarket's authoritative "match in progress"
+    game_start_time: "datetime | None"  # parser fallback when event.live is missing/null
 
     def hours_to_resolution(self) -> float:
         try:
@@ -96,6 +98,23 @@ class MarketCandidate:
             return 0.0
         now = datetime.now(timezone.utc)
         return (end - now).total_seconds() / 3600.0
+
+    def is_live(self) -> bool:
+        """True if the underlying esports match is currently in progress.
+
+        Prefers Polymarket's own `events[].live` flag (set by their data feed
+        during the actual match window). Falls back to comparing
+        game_start_time to now if Gamma didn't provide a live flag.
+
+        Claude's web search can't see live in-game state, so any +EV estimate
+        on a live match is stale and dangerous — the market has already
+        re-priced on game-by-game results Claude doesn't see.
+        """
+        if self.is_live_market:
+            return True
+        if self.game_start_time is not None:
+            return self.game_start_time <= datetime.now(timezone.utc)
+        return False
 
     def is_esports(self) -> bool:
         # Word-boundary match so short tokens like "lec" / "lcs" / "esl" / "iem"
@@ -316,6 +335,56 @@ def _parse_tick_size(raw: Any) -> float:
         return 0.01
 
 
+def _parse_game_start(m: dict) -> "datetime | None":
+    """Parse the underlying match start time. Gamma uses several field names
+    inconsistently; treat them all as best-effort hints. Returns None if absent
+    or unparseable (caller falls through to the time-to-resolution filter).
+    """
+    raw = m.get("gameStartTime") or m.get("startTime") or m.get("game_start_time")
+    if raw is None:
+        # The parent event sometimes has it under `startTime` instead.
+        for ev in (m.get("events") or []):
+            raw = ev.get("startTime") or ev.get("gameStartTime")
+            if raw:
+                break
+    if not raw:
+        return None
+    try:
+        s = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
+def _truthy(v: Any) -> bool:
+    """Coerce Gamma boolean-ish values. Field comes back as bool / "true" /
+    "1" / 1 depending on context, and None/missing means we don't know."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "y")
+    return False
+
+
+def _parse_is_live(m: dict) -> bool:
+    """Return True if Polymarket flags the parent event as currently live.
+
+    The flag lives on the embedded `events` array (event.live), not at market
+    level. Markets typically belong to exactly one event in this data model.
+    Conservative fallback: market-level `live` keys, if a future schema move
+    surfaces it there.
+    """
+    for ev in (m.get("events") or []):
+        if _truthy(ev.get("live")):
+            return True
+    return _truthy(m.get("live")) or _truthy(m.get("isLive"))
+
+
 def _row_to_candidate(m: dict[str, Any]) -> MarketCandidate | None:
     try:
         token_ids = _parse_token_ids(m.get("clobTokenIds"))
@@ -338,6 +407,8 @@ def _row_to_candidate(m: dict[str, Any]) -> MarketCandidate | None:
             neg_risk=bool(m.get("negRisk") or False),
             tick_size=_parse_tick_size(m.get("orderPriceMinTickSize")),
             enable_order_book=bool(m.get("enableOrderBook", True)),
+            is_live_market=_parse_is_live(m),
+            game_start_time=_parse_game_start(m),
         )
     except (KeyError, TypeError, ValueError) as exc:
         log.debug("Skipping malformed market row: %s", exc)
@@ -371,10 +442,17 @@ async def discover_markets() -> list[MarketCandidate]:
             cand = _row_to_candidate(m)
             if cand is None or not cand.condition_id:
                 continue
-            # Prefer the row whose volumeNum is higher — keeps liquidity data sane.
             existing = seen.get(cand.condition_id)
-            if existing is None or cand.volume_usd > existing.volume_usd:
+            if existing is None:
                 seen[cand.condition_id] = cand
+            else:
+                # Live flag from any source wins (we'd rather skip a live game
+                # than trade it). Otherwise prefer the row with higher
+                # volume_usd so liquidity numbers stay sane.
+                if cand.is_live_market and not existing.is_live_market:
+                    seen[cand.condition_id] = cand
+                elif (not existing.is_live_market) and cand.volume_usd > existing.volume_usd:
+                    seen[cand.condition_id] = cand
 
     out = list(seen.values())
     log.info("Gamma returned %d unique binary markets (across %d queries)", len(out), len(queries))
@@ -386,8 +464,15 @@ def filter_esports_tradeable(
 ) -> list[MarketCandidate]:
     """Apply the four hard filters from the spec."""
     kept: list[MarketCandidate] = []
+    live_skipped = 0
     for m in markets:
         if not m.is_esports():
+            continue
+        # Skip matches that have already started — Claude's pre-match research is
+        # blind to live game state. MIN_HOURS_TO_RESOLUTION below stays as a
+        # backup for markets where Gamma didn't provide a start time.
+        if m.is_live():
+            live_skipped += 1
             continue
         if not m.enable_order_book:
             # AMM-only market; can't place CLOB orders against it
@@ -405,6 +490,9 @@ def filter_esports_tradeable(
         if not m.yes_token_id or not m.no_token_id:
             continue
         kept.append(m)
+    if live_skipped:
+        log.info("Skipped %d markets as currently live (game already started)",
+                 live_skipped)
     log.info("Filtered to %d tradeable esports markets", len(kept))
     return kept
 
