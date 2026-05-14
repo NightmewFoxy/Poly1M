@@ -316,51 +316,68 @@ def _parse_tick_size(raw: Any) -> float:
         return 0.01
 
 
-async def discover_markets() -> list[MarketCandidate]:
-    """Fetch active, non-closed binary markets and return parsed candidates.
+def _row_to_candidate(m: dict[str, Any]) -> MarketCandidate | None:
+    try:
+        token_ids = _parse_token_ids(m.get("clobTokenIds"))
+        prices = _parse_outcome_prices(m.get("outcomePrices"))
+        if len(token_ids) != 2 or len(prices) != 2:
+            return None  # not a binary market
+        return MarketCandidate(
+            condition_id=m.get("conditionId") or "",
+            question_id=m.get("questionID") or m.get("groupSlug") or m.get("conditionId") or "",
+            question=m.get("question") or "",
+            end_date_iso=m.get("endDate") or "",
+            volume_usd=float(m.get("volumeNum") or 0),
+            liquidity_usd=float(m.get("liquidityNum") or 0),
+            yes_token_id=token_ids[0],
+            no_token_id=token_ids[1],
+            yes_price=prices[0],
+            no_price=prices[1],
+            category=m.get("category"),
+            slug=m.get("slug") or "",
+            neg_risk=bool(m.get("negRisk") or False),
+            tick_size=_parse_tick_size(m.get("orderPriceMinTickSize")),
+            enable_order_book=bool(m.get("enableOrderBook", True)),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        log.debug("Skipping malformed market row: %s", exc)
+        return None
 
-    Filters at the API level: active=true, closed=false, ordered by volume desc.
-    We pull up to 500 then narrow further in Python (esports keyword, price, time).
+
+async def discover_markets() -> list[MarketCandidate]:
+    """Fetch active binary markets across multiple sort orders + paginate.
+
+    Gamma caps `limit` at 100 per request regardless of what you send. Esports
+    markets are short-lived (single matches) so they don't reach the top by
+    lifetime `volumeNum` but dominate `volume24hr` while a tournament is live.
+    We pull from both lists (and a couple of pages each) and de-dupe by
+    conditionId so the bot sees both the active games and the long-tail
+    high-volume markets.
     """
-    params = {
-        "active": "true",
-        "closed": "false",
-        "archived": "false",
-        "limit": "500",
-        "order": "volumeNum",
-        "ascending": "false",
-    }
-    raw = await _gamma_get("/markets", params)
-    out: list[MarketCandidate] = []
-    for m in raw:
+    common = {"active": "true", "closed": "false", "archived": "false", "ascending": "false"}
+    queries: list[dict[str, str]] = []
+    for sort_key in ("volume24hr", "volume1wk", "volumeNum"):
+        for offset in ("0", "100", "200"):
+            queries.append({**common, "order": sort_key, "limit": "100", "offset": offset})
+
+    seen: dict[str, MarketCandidate] = {}
+    for params in queries:
         try:
-            token_ids = _parse_token_ids(m.get("clobTokenIds"))
-            prices = _parse_outcome_prices(m.get("outcomePrices"))
-            if len(token_ids) != 2 or len(prices) != 2:
-                continue  # not a binary market
-            out.append(
-                MarketCandidate(
-                    condition_id=m.get("conditionId") or "",
-                    question_id=m.get("questionID") or m.get("groupSlug") or m.get("conditionId") or "",
-                    question=m.get("question") or "",
-                    end_date_iso=m.get("endDate") or "",
-                    volume_usd=float(m.get("volumeNum") or 0),
-                    liquidity_usd=float(m.get("liquidityNum") or 0),
-                    yes_token_id=token_ids[0],
-                    no_token_id=token_ids[1],
-                    yes_price=prices[0],
-                    no_price=prices[1],
-                    category=m.get("category"),
-                    slug=m.get("slug") or "",
-                    neg_risk=bool(m.get("negRisk") or False),
-                    tick_size=_parse_tick_size(m.get("orderPriceMinTickSize")),
-                    enable_order_book=bool(m.get("enableOrderBook", True)),
-                )
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            log.debug("Skipping malformed market row: %s", exc)
+            raw = await _gamma_get("/markets", params)
+        except Exception as exc:
+            log.warning("Gamma query %s failed: %s", params, exc)
             continue
-    log.info("Gamma returned %d binary markets", len(out))
+        for m in raw:
+            cand = _row_to_candidate(m)
+            if cand is None or not cand.condition_id:
+                continue
+            # Prefer the row whose volumeNum is higher — keeps liquidity data sane.
+            existing = seen.get(cand.condition_id)
+            if existing is None or cand.volume_usd > existing.volume_usd:
+                seen[cand.condition_id] = cand
+
+    out = list(seen.values())
+    log.info("Gamma returned %d unique binary markets (across %d queries)", len(out), len(queries))
     return out
 
 
