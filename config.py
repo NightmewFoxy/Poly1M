@@ -63,6 +63,11 @@ MAX_PRICE = float(_opt("MAX_PRICE", "0.80"))
 MIN_HOURS_TO_RESOLUTION = float(_opt("MIN_HOURS_TO_RESOLUTION", "2"))
 POLYMARKET_FEE = float(_opt("POLYMARKET_FEE", "0.02"))
 
+# Kill switch: when "false", bot still runs cycles + research (so cache stays warm)
+# but skips the actual order POST. Lets you pause trading without burning API credits
+# on a broken trade path while you fix it.
+TRADING_ENABLED = _opt("TRADING_ENABLED", "true").lower() not in ("false", "0", "no", "off")
+
 # --- Storage (Railway volume mount point) ---
 DATA_DIR = Path(_opt("DATA_DIR", "./data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)

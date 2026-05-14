@@ -208,6 +208,16 @@ async def run_cycle() -> None:
             order_neg_risk = idea.market.neg_risk
             order_tick = idea.market.tick_size
 
+        if not config.TRADING_ENABLED:
+            log.info(
+                "TRADING_ENABLED=false; WOULD HAVE TRADED %s %s @ %.3f stake=$%s "
+                "neg_risk=%s tick=%s ev=%.1fc",
+                idea.market.question[:60], idea.side, live_ask,
+                config.STAKE_USD, order_neg_risk, order_tick, idea.ev_cents,
+            )
+            used_events.add(qid)
+            continue
+
         try:
             fill = await place_market_buy(
                 token_id=idea.token_id,
