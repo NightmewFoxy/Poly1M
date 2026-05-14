@@ -296,8 +296,22 @@ async def main_async() -> None:
         config.LOOP_INTERVAL_SECONDS,
         config.MAX_OPEN_POSITIONS,
     )
+    # Audit position persistence at boot. If positions.json doesn't exist on
+    # Railway after the first run, the volume isn't mounted (or DATA_DIR is
+    # wrong) and the bot will happily re-buy the other side of an already-held
+    # market on the next deploy. Make that visible immediately.
+    open_now = positions.open_count()
+    log.info("Loaded %d open positions from %s", open_now, config.POSITIONS_FILE)
+    if not config.POSITIONS_FILE.exists():
+        log.warning(
+            "positions.json MISSING at %s — first run OR Railway volume not "
+            "mounted. Check DATA_DIR env (should be /data on Railway) and that "
+            "a volume is attached at that mount path.",
+            config.POSITIONS_FILE,
+        )
+
     try:
-        await tg.notify_startup(positions.open_count())
+        await tg.notify_startup(open_now)
     except Exception as exc:
         log.warning("Startup Telegram notify failed: %s", exc)
 
