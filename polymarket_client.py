@@ -533,14 +533,39 @@ async def get_best_ask(token_id: str) -> float | None:
     """Best ask price for `token_id` in dollars (e.g. 0.62). None if no asks.
 
     v2's `get_order_book` returns a dict shaped {"asks": [{"price","size"}, ...], "bids": [...]}.
+
+    Retries up to 3 times on connection-layer errors (`status_code is None`).
+    The sniper missed a $0.69 crossing on 2026-05-14 because CLOB dropped the
+    keep-alive connection at that exact instant and a single-shot fetch gave
+    up. HTTP-level errors (4xx/5xx) are NOT retried — those won't clear in
+    a few tens of ms.
     """
     def _call() -> Any:
         return clob().get_order_book(token_id)
 
-    try:
-        book = await asyncio.to_thread(_call)
-    except Exception as exc:
-        log.warning("orderbook fetch failed for %s: %s", token_id, exc)
+    book: Any = None
+    for attempt in range(3):
+        try:
+            book = await asyncio.to_thread(_call)
+            break
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status is not None:
+                # Real HTTP error — fail fast.
+                log.warning(
+                    "orderbook fetch failed for %s (http %s): %s",
+                    token_id, status, exc,
+                )
+                return None
+            if attempt == 2:
+                log.warning(
+                    "orderbook fetch failed for %s after 3 tries: %s",
+                    token_id, exc,
+                )
+                return None
+            # Connection drop — quick retry on a fresh connection.
+            await asyncio.sleep(0.05 * (attempt + 1))
+    if book is None:
         return None
     asks = book.get("asks") if isinstance(book, dict) else getattr(book, "asks", None)
     if not asks:
