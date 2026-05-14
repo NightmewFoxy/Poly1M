@@ -36,9 +36,14 @@ import sniper_config as scfg
 import sniper_notif as snotif
 import sniper_signal
 from logger_setup import get_logger
-from polymarket_client import GeoblockedError, place_market_buy
+from polymarket_client import (
+    GeoblockedError,
+    NoFillError,
+    get_best_ask,
+    place_market_buy,
+)
 from sniper_binance import BinanceFeed
-from sniper_market import BtcMarket, get_active_market, get_btc_market_resolution
+from sniper_market import BtcMarket, get_active_market_meta, get_btc_market_resolution
 from sniper_orderbook import OrderbookStream
 from sniper_state import SniperState, build_position_record
 
@@ -107,19 +112,34 @@ class Sniper:
         await stream.start()
         self.book_stream = stream
 
-    def _live_asks(self, market: BtcMarket) -> tuple[float | None, float | None]:
-        """Prefer WS-derived asks (low-latency). If WS hasn't seeded yet, fall
-        back to the REST-fetched asks already on the BtcMarket."""
+    async def _live_asks(
+        self, market: BtcMarket
+    ) -> tuple[float | None, float | None]:
+        """Return (up_ask, down_ask) preferring the WS stream. Per-side REST
+        fallback only when WS hasn't seeded yet — the common case (WS healthy)
+        does ZERO REST calls per poll."""
         s = self.book_stream
-        if s is None or not s.connected:
-            return market.up_ask, market.down_ask
-        up = s.latest_up_ask
-        down = s.latest_down_ask
-        if up is None:
-            up = market.up_ask
-        if down is None:
-            down = market.down_ask
-        return up, down
+        ws_up = s.latest_up_ask if (s is not None and s.connected) else None
+        ws_down = s.latest_down_ask if (s is not None and s.connected) else None
+        if ws_up is not None and ws_down is not None:
+            return ws_up, ws_down
+        # Backfill the missing side(s) from REST in parallel.
+        need_up = ws_up is None
+        need_down = ws_down is None
+        if need_up and need_down:
+            rest_up, rest_down = await asyncio.gather(
+                get_best_ask(market.up_token_id),
+                get_best_ask(market.down_token_id),
+            )
+        else:
+            rest_up = (
+                await get_best_ask(market.up_token_id) if need_up else None
+            )
+            rest_down = (
+                await get_best_ask(market.down_token_id) if need_down else None
+            )
+        return (ws_up if ws_up is not None else rest_up,
+                ws_down if ws_down is not None else rest_down)
 
     # ----- signal poller --------------------------------------------------
 
@@ -164,7 +184,8 @@ class Sniper:
                     await asyncio.sleep(poll_interval)
                     continue
 
-                market = await get_active_market()
+                # Metadata-only fetch (cached). Asks come from WS via _live_asks.
+                market = await get_active_market_meta()
                 if market is None:
                     if tick % log_every_n == 0:
                         log.info("signal_poller: no active BTC 5m market found")
@@ -193,12 +214,19 @@ class Sniper:
                     await asyncio.sleep(poll_interval)
                     continue
 
-                # Prefer the WS-derived asks (real-time). REST-fetched asks on
-                # the cached BtcMarket are the fallback for early ticks before
-                # WS has seeded its book.
-                up_ask, down_ask = self._live_asks(market)
+                # Prefer the WS-derived asks (real-time). REST is only hit
+                # per-side when WS hasn't seeded that token's book yet.
+                up_ask, down_ask = await self._live_asks(market)
                 market.up_ask = up_ask
                 market.down_ask = down_ask
+                if up_ask is None or down_ask is None:
+                    if tick % log_every_n == 0:
+                        log.info(
+                            "signal_poller: missing ask (up=%s down=%s); skipping tick",
+                            up_ask, down_ask,
+                        )
+                    await asyncio.sleep(poll_interval)
+                    continue
 
                 decision = sniper_signal.evaluate(market, last_fire_ts)
                 if tick % log_every_n == 0:
@@ -269,6 +297,12 @@ class Sniper:
             except Exception:
                 log.exception("geoblock notify failed")
             return False
+        except NoFillError as exc:
+            # FAK returned zero fill — book moved past our cap, or had nothing
+            # at <=cap. Not a system error; just record the cooldown so we
+            # don't spam retries on the same spike, and move on quietly.
+            log.info("Sniper missed fill on %s: %s", decision.side, exc)
+            return True
         except Exception as exc:
             log.warning("Order placement failed: %s", exc)
             try:

@@ -219,17 +219,28 @@ async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
 
 
 # ---------------------------------------------------------------------------
-# Public: get_active_market — cached metadata + fresh asks for each side
+# Public: market lookup
 # ---------------------------------------------------------------------------
 
 
 _market_cache = BtcMarketCache()
 
 
+async def get_active_market_meta() -> Optional[BtcMarket]:
+    """Cached BtcMarket *metadata only* — no orderbook asks. Used by the
+    sniper poller, which sources asks from the WS orderbook stream (with a
+    per-side REST fallback if WS hasn't seeded yet)."""
+    return await _market_cache.get()
+
+
 async def get_active_market() -> Optional[BtcMarket]:
-    """Returns the currently-tradeable BTC 5m market with `up_ask` and
-    `down_ask` freshly fetched from the CLOB orderbook. None if no active
-    market or if either ask lookup fails — we won't fire on a half-quote.
+    """Currently-tradeable BTC 5m market with `up_ask` + `down_ask` fetched
+    from the CLOB REST orderbook. None if no active market or if either ask
+    lookup fails.
+
+    Retained for callers that need a one-shot REST snapshot. The sniper poll
+    loop no longer uses this — it calls get_active_market_meta() and reads
+    asks from the WS stream directly to avoid 2 wasted REST calls per tick.
     """
     m = await _market_cache.get()
     if m is None:

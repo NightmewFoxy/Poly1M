@@ -628,6 +628,15 @@ async def get_market_meta(condition_id: str) -> dict[str, Any] | None:
     }
 
 
+class NoFillError(RuntimeError):
+    """Order signed and submitted but the CLOB returned zero fill. Not a
+    bug or a config issue — the book moved past our cap before the order
+    landed, or there was simply nothing available at our price. Sniper
+    callers treat this as "tried, missed" (info-level), not as a system
+    error to alert on.
+    """
+
+
 async def place_market_buy(
     token_id: str,
     target_price: float,
@@ -636,29 +645,28 @@ async def place_market_buy(
     tick_size: float = 0.01,
     max_slippage_ticks: int = 2,
 ) -> dict[str, Any]:
-    """Place a $-denominated market BUY, fill-or-kill.
+    """Place a $-denominated market BUY using FAK (Fill-And-Kill / IOC).
 
-    Switched from limit-with-FOK to create_market_order because CLOB rejects
-    limit orders whose makerAmount exceeds 2 decimal places (size*price on a
-    0.001-tick market produces up to 5 decimals; CLOB caps market-style fills
-    at 2). create_market_order takes the dollar amount directly so the maker
-    amount is always whole-cent-aligned.
+    Why FAK and not FOK: the sniper's all-or-nothing FOK orders were getting
+    killed at the CLOB because BTC 5m books are typically thin around the
+    trigger — by the time our order lands, the top of book has stepped past
+    our slippage cap and no atomic fill is possible. FAK accepts any partial
+    fill that's available at <=cap and cancels the rest, so we capture what
+    we can instead of getting zero.
+
+    Slippage protection: we sign with `price = target_price + max_slippage_ticks*tick_size`
+    and pass that to MarketOrderArgs. The CLOB enforces this as a hard ceiling
+    on the effective fill price. Without it, the SDK walks the *current* book
+    at sign time and a thin book lets a $10 order at "best ask $0.10" sweep
+    up to $0.99 if only 1 share sits at the top level.
 
     `neg_risk` must match the market's exchange (True for Neg-Risk, False for
     standard CTF).
 
-    Slippage protection: we sign with `price = target_price + max_slippage_ticks*tick_size`
-    and pass that to MarketOrderArgs. The CLOB enforces this as a hard ceiling
-    on the effective fill price. Without it, MarketOrderArgs.price=0 makes the
-    SDK call calculate_market_price() at sign time, which walks the *current*
-    book — so a thin book lets a $10 order at "best ask $0.10" sweep up to
-    $0.99 if only 1 share sits at the top level. With the cap, FOK kills the
-    order rather than letting it sweep deep into the book.
-
     Returns a result dict mirroring the old signature so positions.py keeps
     working: limit_price (effective fill price), size_shares, stake_usd, response.
-    Raises RuntimeError if the order did not fill (FOK-killed by slippage cap
-    or empty book) — caller must NOT record a position from a failed fill.
+    Raises NoFillError if shares_filled == 0 — caller must NOT record a
+    position, but should also not treat it as a system-level error.
     """
     if stake_usd <= 0:
         raise ValueError(f"invalid stake {stake_usd}")
@@ -673,7 +681,7 @@ async def place_market_buy(
         amount=round(stake_usd, 2),       # whole-cent precision; CLOB enforces this
         side=BUY,
         price=price_cap,                  # hard ceiling on effective fill price
-        order_type=OrderType.FOK,
+        order_type=OrderType.FAK,
     )
     options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_str)
     log.info(
@@ -683,7 +691,7 @@ async def place_market_buy(
 
     def _call() -> Any:
         signed = clob().create_market_order(args, options=options)
-        return clob().post_order(signed, OrderType.FOK)
+        return clob().post_order(signed, OrderType.FAK)
 
     def _is_retryable(exc: BaseException) -> bool:
         # Geoblock is permanent until the egress IP changes — don't waste attempts.
@@ -727,15 +735,16 @@ async def place_market_buy(
     except (TypeError, ValueError) as exc:
         raise RuntimeError(f"Couldn't parse fill amounts from CLOB response: {resp!r}") from exc
 
-    # FOK kills produce takingAmount=0; the old code silently recorded that as
-    # a $0-share position. Treat any zero-fill as a hard failure so positions.py
-    # never sees fake fills.
+    # FAK can return takingAmount=0 when the book moved past our cap before
+    # the order landed (or was empty at <=cap to begin with). That's a "tried
+    # and missed", not a system error — raise the typed NoFillError so the
+    # sniper can treat it as a soft skip instead of paging on it.
     if shares_filled <= 0 or usd_spent <= 0:
         status = resp.get("status")
-        raise RuntimeError(
-            f"Order did not fill (status={status!r} shares={shares_filled} "
-            f"spent=${usd_spent}). Likely FOK-killed by slippage cap "
-            f"(target={target_price}) or empty/thin book."
+        raise NoFillError(
+            f"Order returned zero fill (status={status!r} shares={shares_filled} "
+            f"spent=${usd_spent}). Book moved past cap or empty at <=cap "
+            f"(target={target_price}, cap={price_cap})."
         )
 
     fill_price = usd_spent / shares_filled
