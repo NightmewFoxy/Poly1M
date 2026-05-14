@@ -23,6 +23,7 @@ import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import (
     ApiCreds,
+    MarketOrderArgs,
     OrderArgs,            # OrderArgsV2 alias
     OrderType,
     PartialCreateOrderOptions,
@@ -475,32 +476,38 @@ async def place_market_buy(
     neg_risk: bool = False,
     tick_size: float = 0.01,
 ) -> dict[str, Any]:
-    """Place a marketable limit buy. Crosses the spread by ~2 cents (tick-aligned) to ensure fill.
+    """Place a $-denominated market BUY, fill-or-kill.
 
-    `neg_risk` must match the market's exchange: True for Neg-Risk markets, False
-    for the standard CTF Exchange. Wrong value -> CLOB returns order_version_mismatch.
+    Switched from limit-with-FOK to create_market_order because CLOB rejects
+    limit orders whose makerAmount exceeds 2 decimal places (size*price on a
+    0.001-tick market produces up to 5 decimals; CLOB caps market-style fills
+    at 2). create_market_order takes the dollar amount directly so the maker
+    amount is always whole-cent-aligned.
 
-    Returns the order response dict; raises on hard failure.
+    `neg_risk` must match the market's exchange (True for Neg-Risk, False for
+    standard CTF). The pre-trade MAX_PRICE check still runs in main.py via
+    get_best_ask, so we don't let market FOK chase an unbounded price.
+
+    Returns a result dict mirroring the old signature so positions.py keeps
+    working: limit_price (effective fill price), size_shares, stake_usd, response.
     """
-    # Buy slightly above the best ask to fill immediately; cap at MAX_PRICE.
-    limit_price = min(_round_to_tick(target_price + 0.02, tick_size), config.MAX_PRICE)
-    if limit_price <= 0:
-        raise ValueError(f"invalid limit price {limit_price}")
-    size_shares = math.floor((stake_usd / limit_price) * 100) / 100  # 2 decimals
-    if size_shares <= 0:
-        raise ValueError("computed zero share size")
-
-    args = OrderArgs(token_id=token_id, price=limit_price, size=size_shares, side=BUY)
+    if stake_usd <= 0:
+        raise ValueError(f"invalid stake {stake_usd}")
     tick_str = _tick_size_str(tick_size)
+    args = MarketOrderArgs(
+        token_id=token_id,
+        amount=round(stake_usd, 2),       # whole-cent precision; CLOB enforces this
+        side=BUY,
+        order_type=OrderType.FOK,
+    )
     options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_str)
     log.info(
-        "Signing order: token=%s price=%.4f size=%.2f neg_risk=%s tick=%s",
-        token_id, limit_price, size_shares, neg_risk, tick_str,
+        "Signing market BUY: token=%s amount=$%.2f neg_risk=%s tick=%s",
+        token_id, stake_usd, neg_risk, tick_str,
     )
 
     def _call() -> Any:
-        signed = clob().create_order(args, options=options)
-        # FOK = fill-or-kill; immediate execution at the limit, no resting order left behind.
+        signed = clob().create_market_order(args, options=options)
         return clob().post_order(signed, OrderType.FOK)
 
     def _is_retryable(exc: BaseException) -> bool:
@@ -534,14 +541,25 @@ async def place_market_buy(
             raise
 
     resp = await asyncio.to_thread(_do)
+    # Parse the CLOB response. v2 returns:
+    #   {'makingAmount': '0.999999', 'takingAmount': '15.151514', 'status': 'matched', ...}
+    # makingAmount = USDC spent; takingAmount = shares received.
+    try:
+        usd_spent = float(resp.get("makingAmount", stake_usd))
+        shares_filled = float(resp.get("takingAmount", 0))
+        fill_price = (usd_spent / shares_filled) if shares_filled > 0 else target_price
+    except (TypeError, ValueError):
+        usd_spent = stake_usd
+        shares_filled = stake_usd / target_price if target_price > 0 else 0
+        fill_price = target_price
     log.info(
-        "Order posted token=%s price=%.3f size=%.2f resp=%s",
-        token_id, limit_price, size_shares, resp,
+        "Order filled token=%s fill_price=%.4f shares=%.4f spent=$%.4f resp=%s",
+        token_id, fill_price, shares_filled, usd_spent, resp,
     )
     return {
-        "limit_price": limit_price,
-        "size_shares": size_shares,
-        "stake_usd": round(limit_price * size_shares, 4),
+        "limit_price": round(fill_price, 6),
+        "size_shares": round(shares_filled, 6),
+        "stake_usd": round(usd_spent, 4),
         "response": resp,
     }
 

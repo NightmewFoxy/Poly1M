@@ -42,11 +42,16 @@ POLYMARKET_WALLET_PRIVATE_KEY = _req("POLYMARKET_WALLET_PRIVATE_KEY")
 POLYMARKET_FUNDER_ADDRESS = _req("POLYMARKET_FUNDER_ADDRESS")
 # Signature types (py-clob-client-v2 SignatureTypeV2):
 #   0 = EOA              (maker == signer, ECDSA)
-#   1 = POLY_PROXY       (legacy Polymarket Magic.link proxy contract)
-#   2 = POLY_GNOSIS_SAFE (Polymarket browser wallet, Gnosis Safe)
-#   3 = POLY_1271        (EIP-1271 smart wallets - Privy/Magic embedded, default
-#                         for new accounts post Pectra/EIP-7702)
-POLYMARKET_SIGNATURE_TYPE = int(_opt("POLYMARKET_SIGNATURE_TYPE", "3"))
+#   1 = POLY_PROXY       (Polymarket Magic.link / email proxy — most legacy accounts)
+#   2 = POLY_GNOSIS_SAFE (Polymarket browser-wallet account, Gnosis Safe)
+#   3 = POLY_1271        (EIP-1271 deposit wallet — new accounts post April 2026)
+# Default is 1 (POLY_PROXY) — covers the common legacy email/Magic.link signup.
+# IMPORTANT: for sig_type 1 or 2, POLYMARKET_FUNDER_ADDRESS must be your
+# derived proxy/safe address (NOT the deposit address shown in the UI's Cash
+# tab). To find it, place one trade manually in the Polymarket UI and read
+# `maker_address` from the trade history endpoint, or call
+# `getPolyProxyWalletAddress(your_relayer_eoa)` on the CTF Exchange contract.
+POLYMARKET_SIGNATURE_TYPE = int(_opt("POLYMARKET_SIGNATURE_TYPE", "1"))
 
 CLOB_HOST = "https://clob.polymarket.com"
 GAMMA_HOST = "https://gamma-api.polymarket.com"
