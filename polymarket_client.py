@@ -609,15 +609,34 @@ async def get_market_meta(condition_id: str) -> dict[str, Any] | None:
     Gamma's `negRisk` is occasionally wrong, missing, or string-typed. CLOB's
     response is the canonical source. Returns None on lookup failure (caller
     falls back to the Gamma-derived values).
+
+    Retries up to 3 times on connection-layer errors (status_code is None)
+    — CLOB intermittently times out from the Railway/iproyal path and a
+    quick re-attempt usually succeeds. HTTP-level errors fail fast.
     """
     def _call() -> Any:
         return clob().get_market(condition_id)
 
-    try:
-        info = await asyncio.to_thread(_call)
-    except Exception as exc:
-        log.warning("CLOB get_market(%s) failed: %s", condition_id, exc)
-        return None
+    info: Any = None
+    for attempt in range(3):
+        try:
+            info = await asyncio.to_thread(_call)
+            break
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status is not None:
+                log.warning(
+                    "CLOB get_market(%s) failed (http %s): %s",
+                    condition_id, status, exc,
+                )
+                return None
+            if attempt == 2:
+                log.warning(
+                    "CLOB get_market(%s) failed after 3 tries: %s",
+                    condition_id, exc,
+                )
+                return None
+            await asyncio.sleep(0.3 * (attempt + 1))
     if not isinstance(info, dict):
         return None
     return {

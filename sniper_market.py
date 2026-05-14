@@ -192,10 +192,32 @@ async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
         return None
 
     # CLOB is canonical for neg_risk + tick_size (Gamma occasionally wrong).
+    # But CLOB is also the most likely thing to time out at this exact moment,
+    # and missing a market entirely is worse than trusting Gamma for one 5m
+    # window — Gamma rows on BTC 5m markets carry both `negRisk` and
+    # `orderPriceMinTickSize`, and they're effectively never wrong on these
+    # rotating preset markets. Try CLOB first; fall back to Gamma.
     meta = await get_market_meta(condition_id)
-    if meta is None:
-        log.warning("CLOB get_market(%s) returned no meta; skipping", condition_id)
-        return None
+    if meta is not None:
+        neg_risk = bool(meta["neg_risk"])
+        tick_size = float(meta["tick_size"])
+    else:
+        gamma_neg_risk_raw = m.get("negRisk")
+        if isinstance(gamma_neg_risk_raw, str):
+            gamma_neg_risk = gamma_neg_risk_raw.strip().lower() in ("true", "1", "yes")
+        else:
+            gamma_neg_risk = bool(gamma_neg_risk_raw or False)
+        try:
+            gamma_tick = float(m.get("orderPriceMinTickSize") or 0.01)
+        except (TypeError, ValueError):
+            gamma_tick = 0.01
+        log.warning(
+            "CLOB get_market(%s) returned no meta; falling back to Gamma "
+            "(neg_risk=%s tick=%s)",
+            condition_id, gamma_neg_risk, gamma_tick,
+        )
+        neg_risk = gamma_neg_risk
+        tick_size = gamma_tick
 
     end_iso = m.get("endDate") or ""
     try:
@@ -213,8 +235,8 @@ async def _find_active_btc_5m_market() -> Optional[BtcMarket]:
         end_dt=end_dt,
         up_token_id=up_token_id,
         down_token_id=down_token_id,
-        neg_risk=bool(meta["neg_risk"]),
-        tick_size=float(meta["tick_size"]),
+        neg_risk=neg_risk,
+        tick_size=tick_size,
     )
 
 
