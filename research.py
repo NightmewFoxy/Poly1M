@@ -31,6 +31,7 @@ from tenacity import (
 )
 
 import config
+import research_cache
 from logger_setup import get_logger
 from polymarket_client import MarketCandidate
 
@@ -76,41 +77,21 @@ def _client() -> anthropic.Anthropic:
     return _anthropic
 
 
-_PROMPT_TEMPLATE = """You are a sharp esports analyst pricing a Polymarket binary market.
+_PROMPT_TEMPLATE = """Estimate true probability of YES for this Polymarket esports market.
 
-Market question: {question}
-Market closes (UTC): {end_date}
-Current Polymarket price for YES: {yes_price:.3f}  (implied {yes_implied:.1f}% probability of YES)
-Current Polymarket price for NO:  {no_price:.3f}   (implied {no_implied:.1f}% probability of NO)
+Question: {question}
+Resolves (UTC): {end_date}
+Market YES={yes_price:.2f} ({yes_implied:.0f}%), NO={no_price:.2f} ({no_implied:.0f}%)
 
-Use the web_search tool to find current, dated information that bears on this question:
-- team form / recent results / streaks
-- head-to-head record between the relevant teams
-- roster changes, stand-ins, or known absences
-- patch notes or meta shifts that favor one team
-- venue, LAN vs online, time zone considerations
-- injury / illness / visa / drama news in the last 2 weeks
-- prediction-market or odds consensus elsewhere if reported
+Run 2-3 focused web searches covering: team form, head-to-head, roster/patch news, odds elsewhere. Skip a search if results would be redundant -- fewer is fine.
 
-Do 2-5 focused searches. Then give your honest probability estimate.
-
-Return your answer as a single fenced JSON block at the end, exactly this shape:
+Return only a single fenced JSON block:
 
 ```json
-{{
-  "true_prob_yes": 0.62,
-  "confidence": "medium",
-  "summary": "Two or three sentences: who is favored, why, and the biggest uncertainty.",
-  "key_facts": ["bullet 1", "bullet 2", "bullet 3"]
-}}
+{{"true_prob_yes": 0.62, "confidence": "medium", "summary": "2-3 sentences on who is favored, why, and the biggest uncertainty.", "key_facts": ["fact", "fact"]}}
 ```
 
-Rules for `true_prob_yes`:
-- A number strictly between 0.02 and 0.98 (never 0 or 1 -- there is always uncertainty).
-- This is YOUR estimate, not the market's. If you think the market is mispriced, your number should differ from {yes_implied:.0f}%.
-- `confidence` must be one of: "low", "medium", "high". Use "low" if you couldn't find recent info, "high" only if the evidence is overwhelming.
-- `summary` must be 2-3 sentences, plain English, no markdown.
-"""
+Rules: 0.02 <= true_prob_yes <= 0.98. confidence in {{"low","medium","high"}}. If you can't find recent info, use "low" and pick a value close to {yes_implied:.0f}%."""
 
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
@@ -161,8 +142,8 @@ def _research_call(market: MarketCandidate) -> dict[str, Any] | None:
 
     resp = _client().messages.create(
         model=config.ANTHROPIC_MODEL,
-        max_tokens=2000,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
+        max_tokens=1500,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
         messages=[{"role": "user", "content": prompt}],
     )
     text = _collect_text(resp.content)
@@ -202,10 +183,19 @@ class TradeIdea:
 
 
 def research_and_score(market: MarketCandidate) -> TradeIdea | None:
-    """Run Claude + web search, pick the +EV side at <= MAX_PRICE, return a TradeIdea."""
-    verdict = _research_call(market)
-    if verdict is None:
-        return None
+    """Run Claude + web search (or reuse a cached verdict), pick the +EV side at <= MAX_PRICE, return a TradeIdea."""
+    cached = research_cache.get(market.condition_id, market.yes_price)
+    if cached is not None:
+        log.info("CACHE HIT: %s", market.question[:80])
+        verdict = cached
+    else:
+        verdict = _research_call(market)
+        if verdict is None:
+            return None
+        try:
+            research_cache.put(market.condition_id, market.yes_price, verdict)
+        except Exception as exc:
+            log.warning("research_cache write failed: %s", exc)
     true_p_yes = verdict["true_prob_yes"]
     true_p_no = 1.0 - true_p_yes
 

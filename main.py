@@ -128,7 +128,7 @@ async def run_cycle() -> None:
         return
 
     # Cap research to a sane number to avoid burning API budget on a giant cycle.
-    RESEARCH_CAP = 25
+    RESEARCH_CAP = 10
     if len(candidates) > RESEARCH_CAP:
         candidates = sorted(candidates, key=lambda c: -c.volume_usd)[:RESEARCH_CAP]
         log.info("Capped research universe to top %d by volume", RESEARCH_CAP)
