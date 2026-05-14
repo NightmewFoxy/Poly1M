@@ -35,6 +35,9 @@ from research import TradeIdea, potential_profit_net, research_and_score
 log = get_logger(__name__)
 
 _shutdown = asyncio.Event()
+# Tracks whether the previous cycle hit a geoblock, so we only Telegram on transitions
+# (entering blocked state, or recovering from it) instead of once per 30-min cycle.
+_geoblocked = False
 
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
@@ -199,13 +202,26 @@ async def run_cycle() -> None:
             )
         except GeoblockedError as exc:
             # No point trying the next idea this cycle — every order from this IP will 403.
+            global _geoblocked
             log.error("Geoblocked by Polymarket CLOB: %s", exc)
-            await _safe_notify("place_order_geoblock", exc)
+            if not _geoblocked:
+                _geoblocked = True
+                await _safe_notify("place_order_geoblock", exc)
+            else:
+                log.info("Still geoblocked; suppressing duplicate Telegram alert")
             return
         except Exception as exc:
             log.warning("Order placement failed for %s: %s", idea.market.question[:60], exc)
             await _safe_notify("place_order", exc)
             continue
+
+        # First fill since recovery from a geoblock — let the user know egress is healthy again.
+        if _geoblocked:
+            globals()["_geoblocked"] = False
+            try:
+                await tg.notify_error("geoblock_cleared", "CLOB egress is healthy again; trading resumed.")
+            except Exception:
+                pass
 
         # Persist + notify
         pp = potential_profit_net(fill["limit_price"], fill["stake_usd"])
