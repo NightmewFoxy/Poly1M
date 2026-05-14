@@ -601,6 +601,7 @@ async def place_market_buy(
     stake_usd: float,
     neg_risk: bool = False,
     tick_size: float = 0.01,
+    max_slippage_ticks: int = 2,
 ) -> dict[str, Any]:
     """Place a $-denominated market BUY, fill-or-kill.
 
@@ -611,25 +612,40 @@ async def place_market_buy(
     amount is always whole-cent-aligned.
 
     `neg_risk` must match the market's exchange (True for Neg-Risk, False for
-    standard CTF). The pre-trade MAX_PRICE check still runs in main.py via
-    get_best_ask, so we don't let market FOK chase an unbounded price.
+    standard CTF).
+
+    Slippage protection: we sign with `price = target_price + max_slippage_ticks*tick_size`
+    and pass that to MarketOrderArgs. The CLOB enforces this as a hard ceiling
+    on the effective fill price. Without it, MarketOrderArgs.price=0 makes the
+    SDK call calculate_market_price() at sign time, which walks the *current*
+    book — so a thin book lets a $10 order at "best ask $0.10" sweep up to
+    $0.99 if only 1 share sits at the top level. With the cap, FOK kills the
+    order rather than letting it sweep deep into the book.
 
     Returns a result dict mirroring the old signature so positions.py keeps
     working: limit_price (effective fill price), size_shares, stake_usd, response.
+    Raises RuntimeError if the order did not fill (FOK-killed by slippage cap
+    or empty book) — caller must NOT record a position from a failed fill.
     """
     if stake_usd <= 0:
         raise ValueError(f"invalid stake {stake_usd}")
     tick_str = _tick_size_str(tick_size)
+    # Best ask + slippage buffer, clamped to MAX_PRICE so we never sign above
+    # the strategy's hard price ceiling.
+    price_cap = round(
+        min(target_price + max_slippage_ticks * tick_size, config.MAX_PRICE), 6
+    )
     args = MarketOrderArgs(
         token_id=token_id,
         amount=round(stake_usd, 2),       # whole-cent precision; CLOB enforces this
         side=BUY,
+        price=price_cap,                  # hard ceiling on effective fill price
         order_type=OrderType.FOK,
     )
     options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_str)
     log.info(
-        "Signing market BUY: token=%s amount=$%.2f neg_risk=%s tick=%s",
-        token_id, stake_usd, neg_risk, tick_str,
+        "Signing market BUY: token=%s amount=$%.2f target=%.4f cap=%.4f neg_risk=%s tick=%s",
+        token_id, stake_usd, target_price, price_cap, neg_risk, tick_str,
     )
 
     def _call() -> Any:
@@ -670,14 +686,26 @@ async def place_market_buy(
     # Parse the CLOB response. v2 returns:
     #   {'makingAmount': '0.999999', 'takingAmount': '15.151514', 'status': 'matched', ...}
     # makingAmount = USDC spent; takingAmount = shares received.
+    if not isinstance(resp, dict):
+        raise RuntimeError(f"Unexpected CLOB response type: {type(resp).__name__}: {resp!r}")
     try:
-        usd_spent = float(resp.get("makingAmount", stake_usd))
-        shares_filled = float(resp.get("takingAmount", 0))
-        fill_price = (usd_spent / shares_filled) if shares_filled > 0 else target_price
-    except (TypeError, ValueError):
-        usd_spent = stake_usd
-        shares_filled = stake_usd / target_price if target_price > 0 else 0
-        fill_price = target_price
+        usd_spent = float(resp.get("makingAmount") or 0)
+        shares_filled = float(resp.get("takingAmount") or 0)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Couldn't parse fill amounts from CLOB response: {resp!r}") from exc
+
+    # FOK kills produce takingAmount=0; the old code silently recorded that as
+    # a $0-share position. Treat any zero-fill as a hard failure so positions.py
+    # never sees fake fills.
+    if shares_filled <= 0 or usd_spent <= 0:
+        status = resp.get("status")
+        raise RuntimeError(
+            f"Order did not fill (status={status!r} shares={shares_filled} "
+            f"spent=${usd_spent}). Likely FOK-killed by slippage cap "
+            f"(target={target_price}) or empty/thin book."
+        )
+
+    fill_price = usd_spent / shares_filled
     log.info(
         "Order filled token=%s fill_price=%.4f shares=%.4f spent=$%.4f resp=%s",
         token_id, fill_price, shares_filled, usd_spent, resp,
