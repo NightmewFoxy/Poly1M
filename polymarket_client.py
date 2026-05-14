@@ -291,6 +291,20 @@ def _round_to_tick(price: float, tick: float) -> float:
     return round(round(price / tick) * tick, 6)
 
 
+def _tick_size_str(tick: float) -> str:
+    """py-clob-client's PartialCreateOrderOptions.tick_size is a Literal of strings.
+
+    Passing a float triggers `KeyError: 0.001` in its internal ROUNDING_CONFIG dict
+    which is keyed on those exact strings. Pick the closest canonical value.
+    """
+    for canonical in ("0.0001", "0.001", "0.01", "0.1"):
+        if abs(float(canonical) - tick) < 1e-9:
+            return canonical
+    # Fallback: pick the nearest canonical
+    canonicals = ["0.0001", "0.001", "0.01", "0.1"]
+    return min(canonicals, key=lambda s: abs(float(s) - tick))
+
+
 async def place_market_buy(
     token_id: str,
     target_price: float,
@@ -314,7 +328,7 @@ async def place_market_buy(
         raise ValueError("computed zero share size")
 
     args = OrderArgs(token_id=token_id, price=limit_price, size=size_shares, side=BUY)
-    options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_size)
+    options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=_tick_size_str(tick_size))
 
     def _call() -> Any:
         signed = clob().create_order(args, options=options)
