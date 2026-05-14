@@ -121,8 +121,16 @@ class BtcMarketCache:
             if new is not None:
                 self._current = new
                 self._fetched_at = now
+            elif self._current is not None and self._current.seconds_to_end() > 0:
+                # Refresh failed but cached market is still inside its trading
+                # window — keep using it AND mark it half-fresh so the poll
+                # loop doesn't fire another Gamma request on every 0.5s tick
+                # while Gamma is 504-ing. Without this extension we hammer
+                # the outage with 2-tick × 10s timeout calls and the signal
+                # loop stops evaluating WS asks.
+                self._fetched_at = now - (self.ttl - 5.0)
             elif self._current is not None and self._current.seconds_to_end() <= 0:
-                # Existing cache is stale and refresh failed — drop it.
+                # Existing cache is stale AND market has ended — drop it.
                 self._current = None
             return self._current
 
