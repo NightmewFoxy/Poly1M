@@ -69,16 +69,19 @@ async def notify_resolution(position: dict, won: bool, pnl: float) -> None:
     await _send(msg)
 
 
-async def notify_redeem(position: dict, payout_usd: float, tx_hash: str) -> None:
-    """Sent after an on-chain redemption confirms. Payout is the gross USDC
-    that lands back in the proxy wallet (shares of the winning side, since
-    each winning share pays out $1)."""
+async def notify_redeem_needed(position: dict, payout_usd: float) -> None:
+    """Pings the user that a winning position is ready to redeem in the UI.
+    Sent once per win (the record is marked 'notified' after this fires).
+    Each winning share pays $1, so payout = shares."""
+    slug = position.get("slug") or ""
+    market_url = f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com/portfolio"
     msg = (
-        "REDEEMED\n"
+        "REDEEM READY (click in UI)\n"
         f"Market: {position.get('question', '?')}\n"
         f"Side: {position.get('side', '?')} ({position.get('shares', 0):.2f} shares)\n"
         f"Payout: ${payout_usd:.2f}\n"
-        f"Tx: https://polygonscan.com/tx/{tx_hash}"
+        f"Go redeem: {market_url}\n"
+        "Bot will pick up the freed USDC on its next cycle."
     )
     await _send(msg)
 
