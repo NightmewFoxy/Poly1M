@@ -281,6 +281,43 @@ def clob() -> ClobClient:
 
 
 # ---------------------------------------------------------------------------
+# USDC balance (so we don't burn Claude tokens researching when we can't afford to trade)
+# ---------------------------------------------------------------------------
+
+
+def _get_usdc_balance_sync() -> float | None:
+    """Returns available USDC balance in dollars, or None if lookup failed.
+
+    Polymarket's balance_allowance endpoint sometimes 404s on fresh accounts;
+    callers should treat None as "unknown" and fall back to position-count slots
+    rather than refusing to trade.
+    """
+    from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+    try:
+        params = BalanceAllowanceParams(
+            asset_type=AssetType.COLLATERAL,
+            signature_type=config.POLYMARKET_SIGNATURE_TYPE,
+        )
+        bal = clob().get_balance_allowance(params)
+    except Exception as exc:
+        log.warning("USDC balance lookup failed: %s", exc)
+        return None
+    raw = bal.get("balance") if isinstance(bal, dict) else None
+    if raw is None:
+        log.warning("USDC balance response missing 'balance' field: %s", bal)
+        return None
+    try:
+        return int(raw) / 1_000_000  # USDC has 6 decimals
+    except (TypeError, ValueError):
+        log.warning("USDC balance raw value unparseable: %r", raw)
+        return None
+
+
+async def get_usdc_balance() -> float | None:
+    return await asyncio.to_thread(_get_usdc_balance_sync)
+
+
+# ---------------------------------------------------------------------------
 # Market discovery via Gamma REST (richer metadata than CLOB /markets)
 # ---------------------------------------------------------------------------
 

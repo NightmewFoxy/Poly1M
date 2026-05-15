@@ -30,6 +30,7 @@ from polymarket_client import (
     filter_esports_tradeable,
     get_best_ask,
     get_market_meta,
+    get_usdc_balance,
     place_market_buy,
 )
 from research import TradeIdea, potential_profit_net, research_and_score
@@ -109,6 +110,25 @@ async def run_cycle() -> None:
     if slots == 0:
         log.info("At capacity, skipping discovery this cycle")
         return
+
+    # Cap slots by what we can actually afford. Otherwise we'd burn Claude tokens
+    # researching markets we don't have cash to enter — and just fail at order time.
+    # When older positions resolve in a future cycle, the wallet refills (for wins)
+    # and affordable_slots grows again, so trading resumes naturally.
+    balance = await get_usdc_balance()
+    if balance is None:
+        log.info("Balance unknown; proceeding with position-count slots only")
+    else:
+        affordable_slots = int(balance // config.STAKE_USD)
+        log.info("USDC=$%.2f affordable_slots=%d", balance, affordable_slots)
+        if affordable_slots < slots:
+            slots = affordable_slots
+        if slots == 0:
+            log.info(
+                "Balance $%.2f < stake $%.2f; skipping discovery + research to avoid wasting API tokens",
+                balance, config.STAKE_USD,
+            )
+            return
 
     held_events = positions.open_event_keys()
 
