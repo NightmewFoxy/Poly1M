@@ -69,7 +69,7 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
 
 
 def rank_ideas(ideas: list[TradeIdea]) -> list[TradeIdea]:
-    """Highest EV first; tie-break by volume desc, then nearest end date."""
+    """Highest EV first; tie-break by nearest end date, then volume desc."""
     def end_seconds(i: TradeIdea) -> float:
         try:
             return i.market.hours_to_resolution()
@@ -78,7 +78,7 @@ def rank_ideas(ideas: list[TradeIdea]) -> list[TradeIdea]:
 
     return sorted(
         ideas,
-        key=lambda i: (-i.ev_cents, -i.market.volume_usd, end_seconds(i)),
+        key=lambda i: (-i.ev_cents, end_seconds(i), -i.market.volume_usd),
     )
 
 
