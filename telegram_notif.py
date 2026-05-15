@@ -69,6 +69,20 @@ async def notify_resolution(position: dict, won: bool, pnl: float) -> None:
     await _send(msg)
 
 
+async def notify_redeem(position: dict, payout_usd: float, tx_hash: str) -> None:
+    """Sent after an on-chain redemption confirms. Payout is the gross USDC
+    that lands back in the proxy wallet (shares of the winning side, since
+    each winning share pays out $1)."""
+    msg = (
+        "REDEEMED\n"
+        f"Market: {position.get('question', '?')}\n"
+        f"Side: {position.get('side', '?')} ({position.get('shares', 0):.2f} shares)\n"
+        f"Payout: ${payout_usd:.2f}\n"
+        f"Tx: https://polygonscan.com/tx/{tx_hash}"
+    )
+    await _send(msg)
+
+
 async def notify_no_ev_cycle(scanned: int) -> None:
     await _send(
         f"Cycle complete -- no positive EV markets found (scanned {scanned} candidates)."

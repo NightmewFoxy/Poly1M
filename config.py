@@ -88,6 +88,20 @@ POLYMARKET_FEE = float(_opt("POLYMARKET_FEE", "0.02"))
 # on a broken trade path while you fix it.
 TRADING_ENABLED = _opt("TRADING_ENABLED", "true").lower() not in ("false", "0", "no", "off")
 
+# --- Auto-redeem of resolved-winning positions ---
+# Polygon RPC for sending redeem txs. Public fallback works but is rate-limited;
+# set to an Alchemy/Infura/etc URL on Railway for reliability.
+POLYGON_RPC_URL = _opt("POLYGON_RPC_URL", "")
+# Kill switch — useful for debugging or if web3/eth_account aren't installed.
+AUTO_REDEEM_ENABLED = _opt("AUTO_REDEEM_ENABLED", "true").lower() not in ("false", "0", "no", "off")
+# Max submit retries per resolved win before marking 'failed' and giving up.
+REDEEM_MAX_ATTEMPTS = int(_opt("REDEEM_MAX_ATTEMPTS", "5"))
+# Seconds to wait for a redeem tx to confirm before moving on. Confirmation
+# usually lands in 5-15s on Polygon; we wait up to this long so the freed
+# USDC can be used by the same cycle. If it doesn't confirm in time, the
+# tx stays as 'submitted' and the next cycle picks up the receipt.
+REDEEM_CONFIRMATION_WAIT_SECONDS = int(_opt("REDEEM_CONFIRMATION_WAIT_SECONDS", "60"))
+
 # --- Storage (Railway volume mount point) ---
 DATA_DIR = Path(_opt("DATA_DIR", "./data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -35,6 +35,16 @@ from polymarket_client import (
 )
 from research import TradeIdea, potential_profit_net, research_and_score
 
+try:
+    import redeem
+except Exception as _redeem_import_exc:
+    # Don't crash the whole bot if web3/eth_account aren't importable — log
+    # and disable auto-redeem. The trading path doesn't depend on it.
+    redeem = None  # type: ignore[assignment]
+    _REDEEM_IMPORT_ERROR: str | None = str(_redeem_import_exc)
+else:
+    _REDEEM_IMPORT_ERROR = None
+
 log = get_logger(__name__)
 
 _shutdown = asyncio.Event()
@@ -103,6 +113,17 @@ async def run_cycle() -> None:
     except Exception as exc:
         log.exception("Resolution check failed")
         await _safe_notify("resolution_check", exc)
+
+    # 1b. Auto-redeem any winning positions so the USDC lands in the wallet
+    # before this same cycle decides how many new positions it can afford.
+    # Includes backfill for resolved wins persisted before this feature shipped
+    # (records with no redeem_status field — get_pending_redemptions treats
+    # them as pending).
+    try:
+        await _process_redemptions()
+    except Exception as exc:
+        log.exception("Redeem processing failed")
+        await _safe_notify("redeem", exc)
 
     open_now = positions.open_count()
     slots = max(0, config.MAX_OPEN_POSITIONS - open_now)
@@ -330,7 +351,7 @@ async def run_cycle() -> None:
 
         # Persist + notify
         pp = potential_profit_net(fill["limit_price"], fill["stake_usd"])
-        record = positions.build_position_record(idea, fill, pp)
+        record = positions.build_position_record(idea, fill, pp, order_neg_risk)
         try:
             positions.append_open(record)
         except Exception as exc:
@@ -344,6 +365,157 @@ async def run_cycle() -> None:
             log.warning("Telegram trade notify failed: %s", exc)
 
     log.info("Cycle done; filled %d new positions", filled)
+
+
+async def _process_redemptions() -> None:
+    """Submit on-chain redeem txs for resolved-won positions; wait briefly
+    for confirmation so the freed USDC can be used by the same cycle.
+
+    Two passes:
+      1. Receipts for txs already submitted in prior cycles (or earlier in
+         this cycle). On confirm: persist 'redeemed', Telegram, log payout.
+      2. Pending wins (won + no tx yet). Submit one tx each, wait up to
+         REDEEM_CONFIRMATION_WAIT_SECONDS for receipts, notify the ones
+         that confirmed. Anything still pending stays as 'submitted' and
+         the NEXT cycle's pass 1 will pick it up — no Telegram noise on
+         interim states.
+    """
+    if not config.AUTO_REDEEM_ENABLED:
+        return
+    if redeem is None:
+        log.warning(
+            "redeem module unavailable (import failed: %s); skipping auto-redeem",
+            _REDEEM_IMPORT_ERROR,
+        )
+        return
+
+    # Pass 1: poll receipts for previously-submitted txs.
+    for record in positions.get_submitted_redemptions():
+        tx_hash = record.get("redeem_tx_hash")
+        if not tx_hash:
+            continue
+        try:
+            status = await redeem.get_receipt_status(tx_hash)
+        except Exception as exc:
+            log.warning("receipt poll failed for %s: %s", tx_hash[:10], exc)
+            continue
+        if status is None:
+            continue  # not mined yet
+        await _finalise_redeem_receipt(record, tx_hash, status)
+
+    # Pass 2: submit txs for resolved-won records with no tx yet.
+    pending = positions.get_pending_redemptions()
+    just_submitted: list[tuple[dict, str]] = []
+    for record in pending:
+        cond_id = record.get("condition_id", "")
+        token_id = record.get("token_id", "")
+        side = record.get("side", "")
+        shares = float(record.get("shares", 0))
+        # Default neg_risk=True for legacy records that pre-date the field —
+        # most Polymarket binary markets are neg-risk, and an AlreadyRedeemed
+        # revert on the wrong contract is recoverable (we mark it externally
+        # redeemed and stop trying).
+        neg_risk = bool(record.get("neg_risk", True))
+        attempts = int(record.get("redeem_attempts", 0))
+        if attempts >= config.REDEEM_MAX_ATTEMPTS:
+            positions.set_redeem_status(cond_id, token_id, "failed")
+            log.warning(
+                "Redeem max attempts reached for cond=%s side=%s; marking failed",
+                cond_id[:10], side,
+            )
+            continue
+        if shares <= 0 or not cond_id:
+            positions.set_redeem_status(cond_id, token_id, "skipped")
+            continue
+        try:
+            tx_hash = await redeem.redeem_position(
+                condition_id=cond_id,
+                neg_risk=neg_risk,
+                side=side,
+                shares=shares,
+            )
+        except redeem.AlreadyRedeemedError:
+            positions.set_redeem_status(cond_id, token_id, "redeemed-external")
+            log.info(
+                "Skipping redeem (already redeemed externally): cond=%s side=%s",
+                cond_id[:10], side,
+            )
+            continue
+        except Exception as exc:
+            positions.set_redeem_status(
+                cond_id, token_id, "pending", increment_attempts=True,
+            )
+            log.warning(
+                "Redeem submit failed (cond=%s attempt=%d): %s",
+                cond_id[:10], attempts + 1, exc,
+            )
+            continue
+        positions.set_redeem_status(
+            cond_id, token_id, "submitted",
+            tx_hash=tx_hash, increment_attempts=True,
+        )
+        just_submitted.append((record, tx_hash))
+
+    # Wait briefly so newly-submitted txs can confirm within this cycle.
+    # Polygon block time is ~2s; legitimate redeems usually confirm in 5-15s.
+    if just_submitted:
+        deadline = asyncio.get_event_loop().time() + config.REDEEM_CONFIRMATION_WAIT_SECONDS
+        still_waiting = list(just_submitted)
+        while still_waiting and asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(3)
+            next_round: list[tuple[dict, str]] = []
+            for record, tx_hash in still_waiting:
+                try:
+                    status = await redeem.get_receipt_status(tx_hash)
+                except Exception as exc:
+                    log.warning("receipt poll failed for %s: %s", tx_hash[:10], exc)
+                    next_round.append((record, tx_hash))
+                    continue
+                if status is None:
+                    next_round.append((record, tx_hash))
+                    continue
+                await _finalise_redeem_receipt(record, tx_hash, status)
+            still_waiting = next_round
+        if still_waiting:
+            log.info(
+                "%d redeem tx(s) still unconfirmed after %ds; will pick up "
+                "the receipt(s) next cycle",
+                len(still_waiting), config.REDEEM_CONFIRMATION_WAIT_SECONDS,
+            )
+
+
+async def _finalise_redeem_receipt(record: dict, tx_hash: str, success: bool) -> None:
+    cond_id = record.get("condition_id", "")
+    token_id = record.get("token_id", "")
+    side = record.get("side", "?")
+    shares = float(record.get("shares", 0))
+    if success:
+        positions.set_redeem_status(cond_id, token_id, "redeemed", tx_hash=tx_hash)
+        # Gross payout = shares of the winning side (each pays $1).
+        log.info(
+            "Redeem confirmed: cond=%s side=%s payout=~$%.2f tx=%s",
+            cond_id[:10], side, shares, tx_hash,
+        )
+        try:
+            await tg.notify_redeem(record, payout_usd=shares, tx_hash=tx_hash)
+        except Exception as exc:
+            log.warning("Telegram redeem notify failed: %s", exc)
+    else:
+        attempts = int(record.get("redeem_attempts", 0))
+        if attempts < config.REDEEM_MAX_ATTEMPTS:
+            # Re-flag as pending so the next pass tries again with a fresh nonce.
+            positions.set_redeem_status(cond_id, token_id, "pending", tx_hash=None)
+            log.warning(
+                "Redeem tx reverted (cond=%s tx=%s); will retry "
+                "(attempts=%d/%d)",
+                cond_id[:10], tx_hash, attempts, config.REDEEM_MAX_ATTEMPTS,
+            )
+        else:
+            positions.set_redeem_status(cond_id, token_id, "failed", tx_hash=tx_hash)
+            log.error(
+                "Redeem permanently failed after %d attempts: cond=%s tx=%s",
+                attempts, cond_id[:10], tx_hash,
+            )
 
 
 async def _safe_notify(where: str, exc: BaseException) -> None:

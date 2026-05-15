@@ -77,7 +77,63 @@ def open_event_keys() -> set[str]:
     return {p["question_id"] for p in load()["open"] if p.get("question_id")}
 
 
-def build_position_record(idea, fill: dict, potential_profit: float) -> dict[str, Any]:
+def get_pending_redemptions() -> list[dict[str, Any]]:
+    """Resolved-winning records still flagged redeem_status='pending' (no tx
+    submitted yet). Records written before the auto-redeem feature shipped
+    have no redeem_status field — treat those as pending too so historical
+    wins get backfilled on the first cycle after deploy."""
+    out: list[dict[str, Any]] = []
+    for r in load()["resolved"]:
+        if not r.get("won"):
+            continue
+        status = r.get("redeem_status")
+        if status in (None, "pending"):
+            out.append(r)
+    return out
+
+
+def get_submitted_redemptions() -> list[dict[str, Any]]:
+    """Records with redeem_status='submitted' — a tx is in flight, waiting
+    for confirmation."""
+    return [
+        r for r in load()["resolved"]
+        if r.get("redeem_status") == "submitted" and r.get("redeem_tx_hash")
+    ]
+
+
+def set_redeem_status(
+    condition_id: str,
+    token_id: str,
+    status: str,
+    tx_hash: str | None = None,
+    increment_attempts: bool = False,
+) -> bool:
+    """Update a resolved record's redeem state. Matches by (condition_id,
+    token_id) since the same condition could appear twice (different sides
+    bought on the same market across history). Returns True if a record
+    was matched and updated."""
+    data = load()
+    for r in data["resolved"]:
+        if (
+            r.get("condition_id") == condition_id
+            and r.get("token_id") == token_id
+        ):
+            r["redeem_status"] = status
+            if tx_hash is not None:
+                r["redeem_tx_hash"] = tx_hash
+            if increment_attempts:
+                r["redeem_attempts"] = int(r.get("redeem_attempts", 0)) + 1
+            save(data)
+            return True
+    return False
+
+
+def build_position_record(
+    idea,
+    fill: dict,
+    potential_profit: float,
+    neg_risk: bool,
+) -> dict[str, Any]:
     return {
         "condition_id": idea.market.condition_id,
         "question_id": idea.market.question_id,
@@ -95,6 +151,10 @@ def build_position_record(idea, fill: dict, potential_profit: float) -> dict[str
         "potential_profit_net": potential_profit,
         "opened_at": _now_iso(),
         "ends_at": idea.market.end_date_iso,
+        # Needed at redeem time to pick the right CTF contract (NegRiskAdapter
+        # vs ConditionalTokens). Captured at order time from CLOB meta — that's
+        # the same value used to sign the order.
+        "neg_risk": bool(neg_risk),
     }
 
 
@@ -131,6 +191,14 @@ async def check_resolutions() -> list[tuple[dict, bool, float]]:
             "winner": winner,
             "won": won,
             "pnl": round(pnl, 4),
+            # redeem_status: "pending" if won + payout claim still on-chain,
+            # "skipped" if losing position (no USDC to claim),
+            # "submitted" if a tx is in flight, "redeemed" after confirmation,
+            # "redeemed-external" if a UI/manual redeem burned the tokens first,
+            # "failed" if all retry attempts errored.
+            "redeem_status": "pending" if won else "skipped",
+            "redeem_tx_hash": None,
+            "redeem_attempts": 0,
         }
         data["resolved"].append(p_resolved)
         settled.append((p_resolved, won, pnl))
