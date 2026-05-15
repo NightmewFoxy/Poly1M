@@ -480,46 +480,65 @@ def _row_to_candidate(m: dict[str, Any]) -> MarketCandidate | None:
 
 
 async def discover_markets() -> list[MarketCandidate]:
-    """Fetch active binary markets across multiple sort orders + paginate.
+    """Walk Polymarket's esports events via Gamma's tag filter and flatten to
+    per-market candidates.
 
-    Gamma caps `limit` at 100 per request regardless of what you send. Esports
-    markets are short-lived (single matches) so they don't reach the top by
-    lifetime `volumeNum` but dominate `volume24hr` while a tournament is live.
-    We pull from both lists (and a couple of pages each) and de-dupe by
-    conditionId so the bot sees both the active games and the long-tail
-    high-volume markets.
+    Querying `/events?tag_slug=esports` is far more efficient than the old
+    volume-sorted /markets scan: it returns only esports events (no keyword
+    guessing) including the long-tail of low-volume pre-match markets — which
+    the volume-sorted scan never reached, because a $300-volume R6 market
+    sits ~600 entries deep in any of the volume orders. Per the spec, the
+    "is the game live?" check is the gate, not lifetime volume.
+
+    The events endpoint embeds each event's `markets[]` array; we copy that
+    out, inject the event-level `live` flag and `slug` into each market dict
+    so the existing `_row_to_candidate` parser (which reads `events[].live`
+    and `groupSlug`) just works without per-row Gamma roundtrips.
+
+    Gamma caps `limit` at 100 per request; we paginate up to offset 1500 so
+    even deep long-tail events surface. De-duped by conditionId at the end.
     """
-    common = {"active": "true", "closed": "false", "archived": "false", "ascending": "false"}
-    queries: list[dict[str, str]] = []
-    for sort_key in ("volume24hr", "volume1wk", "volumeNum"):
-        for offset in ("0", "100", "200"):
-            queries.append({**common, "order": sort_key, "limit": "100", "offset": offset})
-
     seen: dict[str, MarketCandidate] = {}
-    for params in queries:
+    pages_fetched = 0
+    for offset in range(0, 1500, 100):
         try:
-            raw = await _gamma_get("/markets", params)
+            events = await _gamma_get("/events", {
+                "tag_slug": "esports",
+                "closed": "false",
+                "archived": "false",
+                "limit": "100",
+                "offset": str(offset),
+            })
         except Exception as exc:
-            log.warning("Gamma query %s failed: %s", params, exc)
+            log.warning("Gamma esports events offset=%d failed: %s", offset, exc)
             continue
-        for m in raw:
-            cand = _row_to_candidate(m)
-            if cand is None or not cand.condition_id:
+        if not events:
+            break
+        pages_fetched += 1
+        for e in events:
+            if _truthy(e.get("closed")) or _truthy(e.get("archived")):
                 continue
-            existing = seen.get(cand.condition_id)
-            if existing is None:
-                seen[cand.condition_id] = cand
-            else:
-                # Live flag from any source wins (we'd rather skip a live game
-                # than trade it). Otherwise prefer the row with higher
-                # volume_usd so liquidity numbers stay sane.
-                if cand.is_live_market and not existing.is_live_market:
-                    seen[cand.condition_id] = cand
-                elif (not existing.is_live_market) and cand.volume_usd > existing.volume_usd:
-                    seen[cand.condition_id] = cand
+            event_live = _truthy(e.get("live"))
+            event_slug = e.get("slug") or ""
+            event_start = e.get("startDate")
+            for raw in (e.get("markets") or []):
+                # Defensive copy + inject the parent-event flags so the
+                # existing parser (which expects events[].live + groupSlug)
+                # behaves the same as on the /markets endpoint.
+                m = dict(raw)
+                m["events"] = [{"live": event_live, "startTime": event_start}]
+                m.setdefault("groupSlug", event_slug)
+                cand = _row_to_candidate(m)
+                if cand is None or not cand.condition_id:
+                    continue
+                # First write wins (events endpoint is the canonical source).
+                seen.setdefault(cand.condition_id, cand)
 
     out = list(seen.values())
-    log.info("Gamma returned %d unique binary markets (across %d queries)", len(out), len(queries))
+    log.info(
+        "Gamma esports events: %d unique markets across %d pages",
+        len(out), pages_fetched,
+    )
     return out
 
 

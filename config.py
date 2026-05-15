@@ -69,7 +69,12 @@ TELEGRAM_CHAT_ID = _req("TELEGRAM_CHAT_ID")
 LOOP_INTERVAL_SECONDS = int(_opt("LOOP_INTERVAL_SECONDS", "1800"))
 MAX_OPEN_POSITIONS = int(_opt("MAX_OPEN_POSITIONS", "10"))
 STAKE_USD = float(_opt("STAKE_USD", "10"))
-MIN_VOLUME_USD = float(_opt("MIN_VOLUME_USD", "10000"))
+# Lifetime $ volume floor for a candidate to enter research. Rule from spec:
+# "as long as the game hasn't started, the bot can execute trades" — volume
+# isn't supposed to gate. Default 0 lets the live-match check and the
+# order-time best-ask check do the gating. Set higher via env if you want to
+# avoid researching markets with paper-thin trading history.
+MIN_VOLUME_USD = float(_opt("MIN_VOLUME_USD", "0"))
 MAX_PRICE = float(_opt("MAX_PRICE", "0.80"))
 # Floor on the price we'll buy: any side cheaper than this is almost certainly a
 # market that's already been decided. The CLOB keeps near-resolved markets open
