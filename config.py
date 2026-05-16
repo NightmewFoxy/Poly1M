@@ -91,10 +91,7 @@ POLYMARKET_FEE = float(_opt("POLYMARKET_FEE", "0.02"))
 # Kill switch: when "false", bot still runs cycles + research (so cache stays warm)
 # but skips the actual order POST. Lets you pause trading without burning API credits
 # on a broken trade path while you fix it.
-# HARD-DISABLED in code so the kill switch survives env var drift on Railway.
-# To resume: delete this line and restore the _opt(...) read below it.
-TRADING_ENABLED = False
-_ = _opt("TRADING_ENABLED", "true").lower() not in ("false", "0", "no", "off")  # noqa: F841
+TRADING_ENABLED = _opt("TRADING_ENABLED", "true").lower() not in ("false", "0", "no", "off")
 
 
 # --- Storage (Railway volume mount point) ---
