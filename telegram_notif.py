@@ -343,32 +343,24 @@ async def notify_account_pnl(
     roi = (total_pnl / total_buy * 100) if total_buy > 0 else 0
     wr = len(wins) / len(closed) * 100 if closed else 0
 
+    avg_win = (sum(float(r["pnl"]) for r in wins) / len(wins)) if wins else 0
     lines = [
         "📊 LIFETIME ACCOUNT PNL",
-        "(reconstructed from on-chain /trades, independent of bot state)",
         "",
         "📈 Summary",
-        f"Closed positions: {len(closed)}  ·  ✅ {len(wins)}W  ·  ❌ {len(losses)}L  ·  ➖ {len(flat)} flat",
-        f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_buy:.2f} invested ({roi:+.1f}% ROI)",
-        f"Win rate: {wr:.0f}%",
+        f"{len(closed)} closed  ·  ✅ {len(wins)}W  ·  ❌ {len(losses)}L",
+        f"Net: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_buy:.2f} invested ({roi:+.1f}% ROI)",
+        f"Win rate: {wr:.0f}%  ·  Avg win: +${avg_win:.2f}",
     ]
     if excl_total:
-        lines.append(
-            f"🚫 Excluded: {excl_total} "
-            f"(extreme price: {excluded_extreme}, "
-            f"live entry: {excluded_live}, "
-            f"both sides: {excluded_both_sides}, "
-            f"non-esports: {excluded_non_esports})"
-        )
+        lines.append(f"🚫 Excluded: {excl_total} bot-error / non-esports trades")
     lines.append("")
 
-    # Top wins / worst losses
-    top_wins = sorted(wins, key=lambda r: -float(r.get("pnl") or 0))[:5]
-    top_losses = sorted(losses, key=lambda r: float(r.get("pnl") or 0))[:5]
-
-    if top_wins:
-        lines.append("🏆 Top wins")
-        for r in top_wins:
+    # Every win, sorted largest first — wins are the actionable signal,
+    # losses are all roughly fixed-stake so listing them is just noise.
+    if wins:
+        lines.append(f"🏆 Wins ({len(wins)})")
+        for r in sorted(wins, key=lambda r: -float(r.get("pnl") or 0)):
             pnl = float(r["pnl"])
             title = (r.get("title") or "?")[:55]
             ep = r.get("entry_price")
@@ -376,47 +368,15 @@ async def notify_account_pnl(
             lines.append(f"  +${pnl:.2f}  {title}{ep_str}")
         lines.append("")
 
-    if top_losses:
-        lines.append("💀 Worst losses")
-        for r in top_losses:
-            pnl = float(r["pnl"])
-            title = (r.get("title") or "?")[:55]
-            ep = r.get("entry_price")
-            ep_str = f" @ ${ep:.2f}" if isinstance(ep, (int, float)) else ""
-            lines.append(f"  -${abs(pnl):.2f}  {title}{ep_str}")
-        lines.append("")
-
-    # Debug: which data source actually populated each PnL number
-    if debug_sources or debug_pm_rows or debug_activity_events:
-        lines.append("🔬 Data source diagnostics")
-        lines.append(f"  Polymarket /positions rows: {debug_pm_rows} ({debug_pm_with_pnl} with realizedPnl)")
-        lines.append(f"  /activity events: {debug_activity_events}")
-        if debug_activity_types:
-            top_types = sorted(debug_activity_types.items(), key=lambda x: -x[1])[:8]
-            lines.append(f"  /activity types: {', '.join(f'{k}={v}' for k, v in top_types)}")
-        lines.append(f"  REDEEM events matched to our positions: {debug_redemptions_matched}")
-        if debug_sample_redeem:
-            lines.append(f"  Sample REDEEM fields: {debug_sample_redeem}")
-        if debug_sources:
-            for k, v in sorted(debug_sources.items(), key=lambda x: -x[1]):
-                lines.append(f"  Per-trade source '{k}': {v}")
-        lines.append("")
-
-    # Exit-kind breakdown — helps user understand what closed how
-    by_kind: dict[str, int] = {}
-    for r in closed:
-        by_kind[r.get("exit_kind", "?")] = by_kind.get(r.get("exit_kind", "?"), 0) + 1
-    if by_kind:
-        lines.append("🔍 How positions closed")
-        for k, c in sorted(by_kind.items(), key=lambda x: -x[1]):
-            label = {
-                "ui_sell": "Sold in UI",
-                "redeemed_win": "Redeemed (won)",
-                "redeemed_loss": "Redeemed (lost)",
-                "resolved_unknown": "Resolved (winner unknown)",
-                "unknown": "Closed (no trace)",
-            }.get(k, k)
-            lines.append(f"  {label}: {c}")
+    # Only surface diagnostics when something actually looks broken — silence
+    # them otherwise. "Closed (no trace)" > 0 means redemption matching
+    # missed positions; that's worth flagging.
+    untraced = sum(1 for r in closed if r.get("exit_kind") == "unknown")
+    if untraced > 0:
+        lines.append(
+            f"⚠️ {untraced} positions closed with no trace — likely losing redeems "
+            "Polymarket doesn't expose. Treated as $0 proceeds."
+        )
 
     text = "\n".join(lines)
     if len(text) > 3900:
