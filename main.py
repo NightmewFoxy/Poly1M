@@ -439,6 +439,11 @@ async def main_async() -> None:
     except Exception as exc:
         log.warning("Startup Telegram notify failed: %s", exc)
 
+    try:
+        await tg.notify_history(positions.list_resolved())
+    except Exception as exc:
+        log.warning("History Telegram report failed: %s", exc)
+
     while not _shutdown.is_set():
         try:
             await run_cycle()

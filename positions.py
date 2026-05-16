@@ -76,6 +76,10 @@ def list_open() -> list[dict[str, Any]]:
     return list(load()["open"])
 
 
+def list_resolved() -> list[dict[str, Any]]:
+    return list(load()["resolved"])
+
+
 def reconcile_with_onchain(held_token_ids: set[str]) -> list[dict[str, Any]]:
     """Drop entries from `open` whose token_id is no longer held on-chain.
 

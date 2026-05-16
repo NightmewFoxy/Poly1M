@@ -113,6 +113,68 @@ async def notify_redeem_needed(position: dict, payout_usd: float) -> None:
     await _send(msg)
 
 
+async def notify_history(resolved: list[dict]) -> None:
+    """Boot-time summary of every resolved trade: profit + true-prob gap.
+
+    Reconciled drops (no on-chain shares at reconcile time, no resolution data)
+    are skipped — they carry no PnL or winner so there's nothing to report.
+    """
+    real = [
+        r for r in resolved
+        if not r.get("reconciled") and r.get("pnl") is not None and r.get("won") is not None
+    ]
+    if not real:
+        return
+
+    wins = [r for r in real if r.get("won")]
+    losses = [r for r in real if not r.get("won")]
+    total_pnl = sum(float(r.get("pnl") or 0) for r in real)
+    total_stake = sum(float(r.get("stake_usd") or 0) for r in real)
+    win_rate = len(wins) / len(real) * 100 if real else 0
+    # Expected win rate = mean of true_prob across all trades (model's average call)
+    avg_true = (
+        sum(float(r.get("true_prob") or 0) for r in real) / len(real) * 100
+        if real else 0
+    )
+    roi = (total_pnl / total_stake * 100) if total_stake > 0 else 0
+
+    lines = [
+        "📜 TRADE HISTORY",
+        "",
+        "📊 Summary",
+        f"Trades: {len(real)} · Wins: {len(wins)} · Losses: {len(losses)}",
+        f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_stake:.2f} staked ({roi:+.1f}% ROI)",
+        f"Win rate: {win_rate:.0f}% (model expected ~{avg_true:.0f}%)",
+        "",
+        "📋 Per-trade (newest first)",
+    ]
+
+    # Newest first; cap to last 40 so we stay under Telegram's 4096-char limit
+    ordered = sorted(real, key=lambda r: r.get("resolved_at") or "", reverse=True)
+    shown = ordered[:40]
+    for r in shown:
+        icon = "✅" if r.get("won") else "❌"
+        pnl = float(r.get("pnl") or 0)
+        q = (r.get("question") or "?")[:60]
+        side = r.get("side") or "?"
+        price = float(r.get("price") or 0)
+        true_p = float(r.get("true_prob") or 0)
+        gap_pp = (true_p - price) * 100  # gap in percentage points
+        lines.append(
+            f"{icon} {'+' if pnl >= 0 else ''}${pnl:.2f}  {q}\n"
+            f"   {side} @ ${price:.2f} · true {true_p * 100:.0f}% (gap {gap_pp:+.1f}pp)"
+        )
+
+    if len(ordered) > len(shown):
+        lines.append("")
+        lines.append(f"… {len(ordered) - len(shown)} older trades not shown")
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3900] + "\n… (truncated)"
+    await _send(text)
+
+
 async def notify_no_ev_cycle(scanned: int) -> None:
     await _send(f"😴 Cycle done — no +EV markets (scanned {scanned} candidates)")
 
