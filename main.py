@@ -637,12 +637,21 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
     # Authoritative token→side map from Gamma clobTokenIds. Lets us figure
     # out if our held token was the winning side without trusting data-api's
     # per-trade `outcome` field (which in practice is often empty).
-    filtered_cids = list({d.get("condition_id") or "" for d in filtered.values() if d.get("condition_id")})
+    filtered_cid_set = {d.get("condition_id") or "" for d in filtered.values() if d.get("condition_id")}
+    filtered_cid_set.discard("")
+    filtered_cids = list(filtered_cid_set)
     try:
         side_map = await get_token_outcome_map(filtered_cids)
     except Exception as exc:
         log.warning("Token outcome map fetch failed: %s", exc)
         side_map = {}
+
+    # Reverse index: conditionId → list of (token_id, side) for our positions
+    cid_to_tokens: dict[str, list[str]] = {}
+    for tk, d in filtered.items():
+        cid = d.get("condition_id") or ""
+        if cid:
+            cid_to_tokens.setdefault(cid, []).append(tk)
 
     # Primary truth source: Polymarket's own /positions with sizeThreshold=0,
     # which returns CLOSED positions too with their realizedPnl. This is what
@@ -678,52 +687,118 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
             "outcome": str(p.get("outcome") or "").upper(),
         }
 
-    # Secondary: /activity for REDEEM events. Polymarket's `type` field uses
-    # uncertain casing/naming — be very permissive (match anything containing
-    # 'redeem' case-insensitive). Also collect unique type strings for the
-    # diagnostic so we can see what Polymarket actually returns.
+    # Secondary: /activity for REDEEM events. Polymarket keys these by
+    # conditionId (market-level), not by token_id — redemption is a single
+    # action on the whole market. So we match by conditionId + figure out
+    # which of our tokens it applies to via the outcomeIndex (or by knowing
+    # we only ever hold one side per market after the both-sides filter).
     redemptions_by_token: dict[str, float] = {}
     redemption_shares_by_token: dict[str, float] = {}
     activity_type_counts: dict[str, int] = {}
+    sample_redeem: dict[str, Any] | None = None
     try:
         activity = await get_user_activity(user_address)
     except Exception as exc:
         log.warning("User activity fetch failed: %s", exc)
         activity = []
+
+    def _to_float(v: Any) -> "float | None":
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     for a in activity:
         atype = str(a.get("type") or "").strip()
         activity_type_counts[atype or "<empty>"] = activity_type_counts.get(atype or "<empty>", 0) + 1
         is_redeem = "redeem" in atype.lower() or atype.lower() in ("redemption", "claim", "settle")
         if not is_redeem:
             continue
+        if sample_redeem is None:
+            sample_redeem = dict(a)  # capture first REDEEM for diagnostic
+
+        # Resolve which token this redemption applies to.
+        # 1) Try direct asset/token field.
         token = str(a.get("asset") or a.get("tokenId") or a.get("token") or "")
+
+        # 2) Match by conditionId + outcomeIndex via side_map.
+        cid = str(a.get("conditionId") or a.get("condition_id") or a.get("market") or "")
+        if not token and cid and cid in side_map:
+            outcome_idx = a.get("outcomeIndex")
+            if outcome_idx is None:
+                outcome_idx = a.get("outcome_index") or a.get("index")
+            try:
+                idx_val = int(outcome_idx) if outcome_idx is not None else None
+            except (TypeError, ValueError):
+                idx_val = None
+            sm = side_map[cid]
+            if idx_val == 0:
+                token = str(sm.get("yes_token") or "")
+            elif idx_val == 1:
+                token = str(sm.get("no_token") or "")
+
+        # 3) Fallback: if we hold exactly one position on this conditionId
+        #    (our normal case after the both-sides filter), the redemption
+        #    must be for that token regardless of outcomeIndex.
+        if not token and cid and cid in cid_to_tokens:
+            cands = cid_to_tokens[cid]
+            if len(cands) == 1:
+                token = cands[0]
+
         if not token:
             continue
-        # Try many candidate field names for USDC received
-        cash = None
+
+        # Extract USDC received
+        cash: "float | None" = None
         for k in (
             "usdcAmount", "usdcSize", "cashAmount", "cash", "value",
-            "amount", "valueUsd", "usdValue", "totalUsd",
+            "amount", "valueUsd", "usdValue", "totalUsd", "payout",
+            "payoutAmount", "payoutValue",
         ):
-            v = a.get(k)
-            if v is not None:
-                try:
-                    cash = float(v)
-                    break
-                except (TypeError, ValueError):
-                    pass
+            cash = _to_float(a.get(k))
+            if cash is not None:
+                break
+
+        # Shares redeemed
         size = 0.0
-        for k in ("size", "shares", "quantity", "amountShares"):
-            v = a.get(k)
-            if v is not None:
-                try:
-                    size = float(v)
-                    break
-                except (TypeError, ValueError):
-                    pass
-        # Winning redemption pays $1/share; if Polymarket reports both we
-        # trust cash. If only size: assume worst case it could be a losing
-        # redeem and not credit anything — Gamma fallback will catch wins.
+        for k in ("size", "shares", "quantity", "amountShares", "redeemSize"):
+            sv = _to_float(a.get(k))
+            if sv is not None:
+                size = sv
+                break
+
+        # Winner detection from outcomeIndex matching our token's side:
+        # if the REDEEM is for the SAME outcomeIndex as our token, it's a
+        # winning redemption (payout = size × $1). Otherwise it's a losing
+        # redemption (payout = $0).
+        side_of_token = ""
+        if cid and cid in side_map:
+            if str(token) == str(side_map[cid].get("yes_token")):
+                side_of_token = "YES"
+            elif str(token) == str(side_map[cid].get("no_token")):
+                side_of_token = "NO"
+        redeemed_idx = a.get("outcomeIndex")
+        try:
+            redeemed_idx_int = int(redeemed_idx) if redeemed_idx is not None else None
+        except (TypeError, ValueError):
+            redeemed_idx_int = None
+        redeemed_side = None
+        if redeemed_idx_int == 0:
+            redeemed_side = "YES"
+        elif redeemed_idx_int == 1:
+            redeemed_side = "NO"
+
+        # If cash is missing, infer from shares × win-indicator
+        if cash is None and size > 0:
+            if redeemed_side and side_of_token and redeemed_side == side_of_token:
+                cash = size  # winning shares pay $1 each
+            elif redeemed_side and side_of_token and redeemed_side != side_of_token:
+                cash = 0.0  # losing redemption pays nothing
+            else:
+                cash = size  # ambiguous — assume winning (Gamma fallback will correct losses)
+
         if cash is not None and cash > 0:
             redemptions_by_token[token] = redemptions_by_token.get(token, 0.0) + cash
         if size > 0:
@@ -823,6 +898,12 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         "Polymarket /positions returned %d rows, %d with realizedPnl; /activity returned %d events",
         len(pm_pnl_by_token), pm_with_realized, len(activity),
     )
+    # Sample REDEEM record keys+values so we can see Polymarket's actual schema
+    sample_redeem_summary = ""
+    if sample_redeem:
+        items = list(sample_redeem.items())[:12]  # first 12 fields
+        sample_redeem_summary = ", ".join(f"{k}={str(v)[:30]}" for k, v in items)
+
     return {
         "closed": closed,
         "excluded_extreme": excluded_extreme,
@@ -834,6 +915,8 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         "debug_pm_with_pnl": pm_with_realized,
         "debug_activity_events": len(activity),
         "debug_activity_types": activity_type_counts,
+        "debug_redemptions_matched": len(redemptions_by_token),
+        "debug_sample_redeem": sample_redeem_summary,
     }
 
 
@@ -941,6 +1024,8 @@ async def main_async() -> None:
             debug_pm_with_pnl=account_data.get("debug_pm_with_pnl", 0),
             debug_activity_events=account_data.get("debug_activity_events", 0),
             debug_activity_types=account_data.get("debug_activity_types", {}),
+            debug_redemptions_matched=account_data.get("debug_redemptions_matched", 0),
+            debug_sample_redeem=account_data.get("debug_sample_redeem", ""),
         )
     except Exception as exc:
         log.warning("Account PnL Telegram report failed: %s", exc)

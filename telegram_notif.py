@@ -310,6 +310,8 @@ async def notify_account_pnl(
     debug_pm_with_pnl: int = 0,
     debug_activity_events: int = 0,
     debug_activity_types: dict | None = None,
+    debug_redemptions_matched: int = 0,
+    debug_sample_redeem: str = "",
 ) -> None:
     """Lifetime account PnL reconstructed from data-api /trades + Gamma
     resolution. Independent of positions.json — answers 'how have I really
@@ -390,10 +392,11 @@ async def notify_account_pnl(
         lines.append(f"  Polymarket /positions rows: {debug_pm_rows} ({debug_pm_with_pnl} with realizedPnl)")
         lines.append(f"  /activity events: {debug_activity_events}")
         if debug_activity_types:
-            # Show which event types Polymarket actually returns so we can fix
-            # the redeem matcher if the type strings don't include 'redeem'
             top_types = sorted(debug_activity_types.items(), key=lambda x: -x[1])[:8]
             lines.append(f"  /activity types: {', '.join(f'{k}={v}' for k, v in top_types)}")
+        lines.append(f"  REDEEM events matched to our positions: {debug_redemptions_matched}")
+        if debug_sample_redeem:
+            lines.append(f"  Sample REDEEM fields: {debug_sample_redeem}")
         if debug_sources:
             for k, v in sorted(debug_sources.items(), key=lambda x: -x[1]):
                 lines.append(f"  Per-trade source '{k}': {v}")
