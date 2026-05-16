@@ -43,6 +43,44 @@ def _market_url(slug: str | None) -> str:
     return f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com/portfolio"
 
 
+async def notify_open_position_details(p: dict) -> None:
+    """Re-emit the TRADE EXECUTED format for an already-open position. Used
+    on boot so the user can see the EV / pp / why on currently-held positions
+    (and manually exit the thin ones in the UI)."""
+    side = p.get("side") or "?"
+    price = float(p.get("price") or 0)
+    stake = float(p.get("stake_usd") or 0)
+    shares = float(p.get("shares") or 0)
+    true_p = float(p.get("true_prob") or 0)
+    ev_c = float(p.get("ev_cents") or 0)
+    potential = float(p.get("potential_profit_net") or 0)
+    gap_pp = (true_p - price) * 100
+    url = _market_url(p.get("slug"))
+    summary = (p.get("summary") or "")[:600]
+    msg = (
+        "🟢 OPEN POSITION (review)\n"
+        "\n"
+        "📊 Market\n"
+        f"{p.get('question', '?')}\n"
+        f"🔗 {url}\n"
+        "\n"
+        "💰 Position\n"
+        f"{side} at ${price:.2f}\n"
+        f"Stake: ${stake:.2f} → {shares:.2f} shares\n"
+        f"Potential profit: +${potential:.2f} after fees\n"
+        "\n"
+        "📈 Edge\n"
+        f"True probability: {true_p * 100:.0f}% (bot's estimate)\n"
+        f"Market implied: {price * 100:.0f}%\n"
+        f"EV: {'+' if ev_c >= 0 else ''}{ev_c:.1f}¢ per dollar staked\n"
+        f"Gap: {gap_pp:+.1f}pp (thin = consider canceling)\n"
+        "\n"
+        "🧠 Why\n"
+        f"{summary}"
+    )
+    await _send(msg)
+
+
 async def notify_trade(idea, fill: dict, potential_profit: float) -> None:
     side = idea.side
     price = fill["limit_price"]
@@ -187,11 +225,51 @@ async def notify_history(
         )
         lines.append("")
 
-    # --- Per-trade list
-    ordered = sorted(resolved, key=lambda r: r.get("resolved_at") or "", reverse=True)
+    # --- Bucketed analysis: win rate by edge size. This is the answer to
+    # "what MIN_EV / min pp should I use" — pick the smallest bucket where
+    # wins outpace losses by enough to overcome variance.
+    def _gap_pp(r: dict) -> float | None:
+        tp = r.get("true_prob")
+        pr = r.get("price")
+        if tp is None or pr is None:
+            return None
+        return (float(tp) - float(pr)) * 100
+
+    buckets = [
+        ("+0–2pp  (thinnest)", 0.0, 2.0),
+        ("+2–5pp", 2.0, 5.0),
+        ("+5–10pp", 5.0, 10.0),
+        ("+10pp+  (thickest)", 10.0, 9999.0),
+    ]
+    if with_pnl:
+        lines.append("📐 By edge size (use this to pick min pp threshold)")
+        for label, lo, hi in buckets:
+            in_bucket = [
+                r for r in with_pnl
+                if (g := _gap_pp(r)) is not None and lo <= g < hi
+            ]
+            if not in_bucket:
+                lines.append(f"{label}: (no trades)")
+                continue
+            wins = [r for r in in_bucket if float(r.get("pnl") or 0) > 0]
+            wr = len(wins) / len(in_bucket) * 100
+            avg_true = sum(float(r["true_prob"]) for r in in_bucket) / len(in_bucket) * 100
+            net = sum(float(r.get("pnl") or 0) for r in in_bucket)
+            lines.append(
+                f"{label}: {len(wins)}W / {len(in_bucket) - len(wins)}L · "
+                f"{wr:.0f}% won (expected {avg_true:.0f}%) · net {'+' if net >= 0 else ''}${net:.2f}"
+            )
+        lines.append("")
+
+    # --- Per-trade list, sorted by pp ascending (thinnest edge first) so the
+    # user can scan top-down looking for where wins start.
+    def _sort_key(r: dict) -> float:
+        g = _gap_pp(r)
+        return g if g is not None else 999.0
+    ordered = sorted(resolved, key=_sort_key)
     shown = ordered[:30]
     if shown:
-        lines.append("📋 Per-trade (newest first)")
+        lines.append("📋 Per-trade (thinnest edge → thickest)")
     for r in shown:
         pnl_val = r.get("pnl")
         if pnl_val is None:
@@ -207,8 +285,8 @@ async def notify_history(
         true_p = float(r.get("true_prob") or 0)
         gap_pp = (true_p - price) * 100
         lines.append(
-            f"{icon} {pnl_str}  {q}\n"
-            f"   {side} @ ${price:.2f} · true {true_p * 100:.0f}% (gap {gap_pp:+.1f}pp)"
+            f"{icon} gap {gap_pp:+.1f}pp · {pnl_str}\n"
+            f"   {side} @ ${price:.2f} · true {true_p * 100:.0f}% · {q}"
         )
 
     if len(ordered) > len(shown):

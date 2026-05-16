@@ -80,6 +80,22 @@ def list_resolved() -> list[dict[str, Any]]:
     return list(load()["resolved"])
 
 
+def mark_details_sent(token_id: str) -> bool:
+    """Flag an open position as having had its OPEN POSITION review message
+    emitted, so the boot-time resend doesn't spam it on every restart.
+    Returns True if a record was found and updated."""
+    data = load()
+    changed = False
+    for p in data["open"]:
+        if str(p.get("token_id") or "") == str(token_id):
+            p["details_sent"] = True
+            changed = True
+            break
+    if changed:
+        save(data)
+    return changed
+
+
 def reconcile_with_onchain(held_token_ids: set[str]) -> list[dict[str, Any]]:
     """Drop entries from `open` whose token_id is no longer held on-chain.
 

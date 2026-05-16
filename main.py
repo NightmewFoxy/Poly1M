@@ -528,6 +528,18 @@ async def main_async() -> None:
     except Exception as exc:
         log.warning("Startup Telegram notify failed: %s", exc)
 
+    # One-shot per-position review: resend the TRADE EXECUTED format for any
+    # open position that hasn't had its review message emitted yet. Lets the
+    # user spot thin-edge trades currently held and manually exit them.
+    for p in positions.list_open():
+        if p.get("details_sent"):
+            continue
+        try:
+            await tg.notify_open_position_details(p)
+            positions.mark_details_sent(p.get("token_id") or "")
+        except Exception as exc:
+            log.warning("Open-position detail notify failed: %s", exc)
+
     try:
         resolved_records = positions.list_resolved()
         enriched = await _enrich_with_realised_pnl(
