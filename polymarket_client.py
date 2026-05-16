@@ -29,7 +29,7 @@ from py_clob_client_v2.clob_types import (
     PartialCreateOrderOptions,
 )
 from py_clob_client_v2.exceptions import PolyApiException
-from py_clob_client_v2.order_builder.constants import BUY
+from py_clob_client_v2.order_builder.constants import BUY, SELL
 from py_clob_client_v2.order_utils.model.signature_type_v2 import SignatureTypeV2
 from py_clob_client_v2.order_utils import exchange_order_builder_v2 as _eob_v2
 from eth_abi import encode as _abi_encode
@@ -853,6 +853,110 @@ async def place_market_buy(
         "limit_price": round(fill_price, 6),
         "size_shares": round(shares_filled, 6),
         "stake_usd": round(usd_spent, 4),
+        "response": resp,
+    }
+
+
+async def place_market_sell(
+    token_id: str,
+    shares: float,
+    target_price: float,
+    neg_risk: bool = False,
+    tick_size: float = 0.01,
+    max_slippage_ticks: int = 2,
+) -> dict[str, Any]:
+    """Market SELL: dump `shares` of a held token at the best bid (FAK).
+
+    Floors price at target_price - max_slippage_ticks*tick_size so we don't
+    sell into a vacuum. Used by rotation logic to free up capital when a
+    much better trade appears.
+    """
+    if shares <= 0:
+        raise ValueError(f"invalid shares {shares}")
+    tick_str = _tick_size_str(tick_size)
+    price_floor = round(max(target_price - max_slippage_ticks * tick_size, 0.01), 6)
+    args = MarketOrderArgs(
+        token_id=token_id,
+        amount=round(shares, 6),  # for SELL, `amount` is shares not USDC
+        side=SELL,
+        price=price_floor,
+        order_type=OrderType.FAK,
+    )
+    options = PartialCreateOrderOptions(neg_risk=neg_risk, tick_size=tick_str)
+    log.info(
+        "Signing market SELL: token=%s shares=%.4f target=%.4f floor=%.4f neg_risk=%s",
+        token_id, shares, target_price, price_floor, neg_risk,
+    )
+
+    def _call() -> Any:
+        signed = clob().create_market_order(args, options=options)
+        return clob().post_order(signed, OrderType.FAK)
+
+    def _is_retryable(exc: BaseException) -> bool:
+        if isinstance(exc, GeoblockedError):
+            return False
+        if isinstance(exc, PolyApiException):
+            code = getattr(exc, "status_code", None)
+            if isinstance(code, int) and 400 <= code < 500:
+                return False
+        return True
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=15),
+        retry=tenacity_retry_if(_is_retryable),
+        reraise=True,
+    )
+    def _do() -> Any:
+        try:
+            return _call()
+        except PolyApiException as exc:
+            if _is_geoblock(exc):
+                raise GeoblockedError(
+                    "Polymarket CLOB returned 403 (region blocked)."
+                ) from exc
+            raise
+
+    try:
+        resp = await asyncio.to_thread(_do)
+    except PolyApiException as exc:
+        err_text = str(exc).lower()
+        status = getattr(exc, "status_code", None)
+        soft_miss_markers = (
+            "no orders found to match", "fak orders are", "fok orders are",
+            "couldn't be fully filled", "couldn't be partially filled",
+        )
+        if status == 400 and any(s in err_text for s in soft_miss_markers):
+            raise NoFillError(
+                f"SELL rejected — book moved past floor "
+                f"(target={target_price}, floor={price_floor}): {exc}"
+            ) from exc
+        raise
+
+    if not isinstance(resp, dict):
+        raise RuntimeError(f"Unexpected CLOB response: {resp!r}")
+    # For SELL: makingAmount = shares sold, takingAmount = USDC received.
+    try:
+        shares_sold = float(resp.get("makingAmount") or 0)
+        usd_received = float(resp.get("takingAmount") or 0)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Couldn't parse SELL fill amounts: {resp!r}") from exc
+
+    if shares_sold <= 0 or usd_received <= 0:
+        status = resp.get("status")
+        raise NoFillError(
+            f"SELL returned zero fill (status={status!r}). "
+            f"Book empty at >=floor (target={target_price}, floor={price_floor})."
+        )
+    fill_price = usd_received / shares_sold
+    log.info(
+        "SELL filled token=%s fill_price=%.4f shares=%.4f received=$%.4f",
+        token_id, fill_price, shares_sold, usd_received,
+    )
+    return {
+        "limit_price": round(fill_price, 6),
+        "size_shares": round(shares_sold, 6),
+        "usd_received": round(usd_received, 4),
         "response": resp,
     }
 

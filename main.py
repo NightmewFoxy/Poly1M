@@ -39,7 +39,9 @@ from polymarket_client import (
     get_user_positions_full,
     get_user_trades,
     place_market_buy,
+    place_market_sell,
 )
+from polymarket_client import NoFillError
 
 
 def _parse_ts(val: Any) -> "datetime | None":
@@ -147,14 +149,15 @@ async def run_cycle() -> None:
     open_now = positions.open_count()
     slots = max(0, config.MAX_OPEN_POSITIONS - open_now)
     log.info("Open=%d slots_available=%d", open_now, slots)
-    if slots == 0:
-        log.info("At capacity, skipping discovery this cycle")
+    if slots == 0 and not config.ROTATION_ENABLED:
+        log.info("At capacity, skipping discovery this cycle (rotation disabled)")
         return
+    if slots == 0:
+        log.info("At capacity but rotation enabled — researching for swap candidates")
 
-    # Cap slots by what we can actually afford. Otherwise we'd burn Claude tokens
-    # researching markets we don't have cash to enter — and just fail at order time.
-    # When older positions resolve in a future cycle, the wallet refills (for wins)
-    # and affordable_slots grows again, so trading resumes naturally.
+    # Cap slots by what we can actually afford. With rotation enabled we still
+    # research even at $0 balance — a SELL on a held position self-funds the
+    # next BUY, so we can rotate without a positive starting balance.
     balance = await get_usdc_balance()
     if balance is None:
         log.info("Balance unknown; proceeding with position-count slots only")
@@ -163,9 +166,9 @@ async def run_cycle() -> None:
         log.info("USDC=$%.2f affordable_slots=%d", balance, affordable_slots)
         if affordable_slots < slots:
             slots = affordable_slots
-        if slots == 0:
+        if slots == 0 and not config.ROTATION_ENABLED:
             log.info(
-                "Balance $%.2f < stake $%.2f; skipping discovery + research to avoid wasting API tokens",
+                "Balance $%.2f < stake $%.2f; skipping discovery + research (rotation disabled)",
                 balance, config.STAKE_USD,
             )
             return
@@ -383,7 +386,131 @@ async def run_cycle() -> None:
         except Exception as exc:
             log.warning("Telegram trade notify failed: %s", exc)
 
-    log.info("Cycle done; filled %d new positions", filled)
+    # 5b. Rotation pass — for remaining ideas the normal loop didn't take
+    # (slots full, or event already used), check whether any held position
+    # has a pp gap that's at least ROTATION_MIN_PP_IMPROVEMENT smaller. If
+    # so, SELL the weakest held + BUY the new one. Capped per cycle so we
+    # don't churn fees.
+    rotations_done = 0
+    if config.ROTATION_ENABLED:
+        for idea in ranked:
+            if rotations_done >= config.ROTATION_MAX_PER_CYCLE:
+                break
+            if _shutdown.is_set():
+                break
+            if idea.market.question_id in used_events:
+                continue
+            new_gap_pp = (idea.true_prob_side - idea.price) * 100
+            # Find the held position with the LOWEST pp gap that's at least
+            # ROTATION_MIN_PP_IMPROVEMENT below the new idea.
+            held = positions.list_open_strategy()
+            target = None
+            target_gap = None
+            for p in held:
+                try:
+                    h_gap = (float(p.get("true_prob") or 0) - float(p.get("price") or 0)) * 100
+                except (TypeError, ValueError):
+                    continue
+                if new_gap_pp - h_gap < config.ROTATION_MIN_PP_IMPROVEMENT:
+                    continue
+                if target is None or h_gap < target_gap:
+                    target = p
+                    target_gap = h_gap
+            if target is None:
+                continue
+
+            ok = await _execute_rotation(target, idea, used_events)
+            if ok:
+                rotations_done += 1
+
+    log.info("Cycle done; filled %d new positions, rotated %d", filled, rotations_done)
+
+
+async def _execute_rotation(
+    old_position: dict[str, Any],
+    new_idea,
+    used_events: set[str],
+) -> bool:
+    """Sell `old_position`, then buy `new_idea`. Returns True on full success.
+    On partial failure (sell ok but buy fails), the sale's USDC stays free
+    for the next cycle — no rollback attempted."""
+    old_token = str(old_position.get("token_id") or "")
+    if not old_token:
+        return False
+    old_shares = float(old_position.get("shares") or 0)
+    if old_shares <= 0:
+        return False
+
+    # Get current best bid for the position to set a realistic price floor
+    try:
+        live_bid = await get_best_ask(old_token)  # asks for OPPOSITE token = our bid
+    except Exception:
+        live_bid = None
+    target_sell_price = (1.0 - float(live_bid)) if live_bid is not None else 0.5
+    if target_sell_price <= 0 or target_sell_price >= 1:
+        target_sell_price = max(0.05, min(0.95, float(old_position.get("price") or 0.5)))
+
+    try:
+        sell_result = await place_market_sell(
+            token_id=old_token,
+            shares=old_shares,
+            target_price=target_sell_price,
+            neg_risk=bool(old_position.get("neg_risk")),
+        )
+    except NoFillError as exc:
+        log.warning("Rotation SELL got no fill on %s: %s", old_token[:12], exc)
+        return False
+    except Exception as exc:
+        log.warning("Rotation SELL failed on %s: %s", old_token[:12], exc)
+        await _safe_notify("rotation_sell", exc)
+        return False
+
+    positions.mark_rotated_out(
+        token_id=old_token,
+        usd_received=sell_result["usd_received"],
+        sell_price=sell_result["limit_price"],
+        rotated_into_question=new_idea.market.question,
+    )
+
+    # Now place the new BUY. If it fails, the freed USDC stays for next cycle.
+    live_ask = await get_best_ask(new_idea.token_id)
+    if live_ask is None or live_ask > config.MAX_PRICE or live_ask < config.MIN_PRICE:
+        log.warning("Rotation aborted on BUY leg: live_ask=%s out of range", live_ask)
+        return False
+    meta = await get_market_meta(new_idea.market.condition_id)
+    if meta is None:
+        log.warning("Rotation aborted on BUY leg: no CLOB meta")
+        return False
+    try:
+        fill = await place_market_buy(
+            token_id=new_idea.token_id,
+            target_price=live_ask,
+            stake_usd=config.STAKE_USD,
+            neg_risk=meta["neg_risk"],
+            tick_size=meta["tick_size"],
+        )
+    except NoFillError as exc:
+        log.warning("Rotation BUY got no fill: %s", exc)
+        return False
+    except Exception as exc:
+        log.warning("Rotation BUY failed: %s", exc)
+        await _safe_notify("rotation_buy", exc)
+        return False
+
+    pp = potential_profit_net(fill["limit_price"], fill["stake_usd"])
+    record = positions.build_position_record(new_idea, fill, pp, meta["neg_risk"])
+    try:
+        positions.append_open(record)
+    except Exception as exc:
+        log.exception("Failed to persist rotation-bought position; order did go through")
+        await _safe_notify("rotation_persist", exc)
+
+    used_events.add(new_idea.market.question_id)
+    try:
+        await tg.notify_rotation(old_position, new_idea, fill, sell_result)
+    except Exception as exc:
+        log.warning("Rotation Telegram notify failed: %s", exc)
+    return True
 
 
 async def _notify_pending_redemptions() -> None:

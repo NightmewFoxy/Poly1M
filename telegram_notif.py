@@ -384,6 +384,40 @@ async def notify_account_pnl(
     await _send(text)
 
 
+async def notify_rotation(
+    old_position: dict,
+    new_idea,
+    new_fill: dict,
+    sell_result: dict,
+) -> None:
+    """Fired when the bot swaps a low-pp held position for a much-higher-pp idea."""
+    old_gap = (float(old_position.get("true_prob") or 0) - float(old_position.get("price") or 0)) * 100
+    new_gap = (new_idea.true_prob_side - new_idea.price) * 100
+    rotation_pnl = float(sell_result.get("usd_received") or 0) - float(old_position.get("stake_usd") or 0)
+    old_url = _market_url(old_position.get("slug"))
+    new_url = _market_url(getattr(new_idea.market, "slug", "") or "")
+    msg = (
+        "🔄 ROTATION (swapped for better edge)\n"
+        "\n"
+        "❌ Sold\n"
+        f"{old_position.get('question', '?')}\n"
+        f"🔗 {old_url}\n"
+        f"{old_position.get('side', '?')} @ ${float(old_position.get('price') or 0):.2f} "
+        f"(was {old_gap:+.1f}pp)\n"
+        f"Sold at ${float(sell_result.get('limit_price') or 0):.2f} → "
+        f"${float(sell_result.get('usd_received') or 0):.2f}  "
+        f"(PnL on this leg: {'+' if rotation_pnl >= 0 else ''}${rotation_pnl:.2f})\n"
+        "\n"
+        "✅ Bought\n"
+        f"{new_idea.market.question}\n"
+        f"🔗 {new_url}\n"
+        f"{new_idea.side} @ ${new_fill['limit_price']:.2f} "
+        f"(now {new_gap:+.1f}pp, {(new_gap - old_gap):+.1f}pp better)\n"
+        f"Stake: ${new_fill['stake_usd']:.2f} → {new_fill['size_shares']:.2f} shares"
+    )
+    await _send(msg)
+
+
 async def notify_no_ev_cycle(scanned: int) -> None:
     await _send(f"😴 Cycle done — no +EV markets (scanned {scanned} candidates)")
 

@@ -91,6 +91,13 @@ MAX_EV_CENTS_PER_DOLLAR = float(_opt("MAX_EV_CENTS_PER_DOLLAR", "50"))
 # inside Claude's calibration noise (~3-5pp on esports markets). Set to 0
 # to disable. Bot was opening +1pp trades that lost 3/3 in observed history.
 MIN_GAP_PP = float(_opt("MIN_GAP_PP", "3"))
+# Rotation: when at capacity, sell the lowest-pp held position to make room
+# for a new idea whose pp gap exceeds it by >= ROTATION_MIN_PP_IMPROVEMENT.
+# Set high enough to clear the round-trip fees (~$0.30) on rotation. Below
+# +5pp, the gain from rotating doesn't beat the spread+fee cost.
+ROTATION_ENABLED = _opt("ROTATION_ENABLED", "true").lower() not in ("false", "0", "no", "off")
+ROTATION_MIN_PP_IMPROVEMENT = float(_opt("ROTATION_MIN_PP_IMPROVEMENT", "5"))
+ROTATION_MAX_PER_CYCLE = int(_opt("ROTATION_MAX_PER_CYCLE", "2"))
 MIN_HOURS_TO_RESOLUTION = float(_opt("MIN_HOURS_TO_RESOLUTION", "2"))
 POLYMARKET_FEE = float(_opt("POLYMARKET_FEE", "0.02"))
 

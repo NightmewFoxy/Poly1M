@@ -161,6 +161,43 @@ def list_open_strategy() -> list[dict[str, Any]]:
     return [p for p in load()["open"] if not p.get("bot_error")]
 
 
+def mark_rotated_out(
+    token_id: str,
+    usd_received: float,
+    sell_price: float,
+    rotated_into_question: str,
+) -> dict[str, Any] | None:
+    """Move an open position to resolved with exit_kind=rotated. Used when
+    a better-edge trade displaced this one. Returns the moved record or None."""
+    data = load()
+    target = None
+    for i, p in enumerate(data["open"]):
+        if str(p.get("token_id") or "") == str(token_id):
+            target = data["open"].pop(i)
+            break
+    if target is None:
+        return None
+    stake = float(target.get("stake_usd") or 0)
+    pnl = round(float(usd_received) - stake, 4)
+    target_resolved = {
+        **target,
+        "resolved_at": _now_iso(),
+        "winner": None,
+        "won": pnl > 0,
+        "pnl": pnl,
+        "redeem_status": "skipped",
+        "exit_kind": "rotated",
+        "sell_price": round(float(sell_price), 6),
+        "usd_received": round(float(usd_received), 4),
+        "rotated_into": rotated_into_question[:120],
+    }
+    data["resolved"].append(target_resolved)
+    if len(data["resolved"]) > 200:
+        data["resolved"] = data["resolved"][-200:]
+    save(data)
+    return target_resolved
+
+
 def list_resolved_strategy() -> list[dict[str, Any]]:
     """Resolved positions excluding bot errors — what all user-facing reports use."""
     return [r for r in load()["resolved"] if not r.get("bot_error")]
