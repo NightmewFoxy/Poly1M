@@ -35,6 +35,7 @@ from polymarket_client import (
     get_onchain_position_tokens,
     get_token_outcome_map,
     get_usdc_balance,
+    get_user_activity,
     get_user_trades,
     place_market_buy,
 )
@@ -622,6 +623,49 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         log.warning("Token outcome map fetch failed: %s", exc)
         side_map = {}
 
+    # Pull /activity to recover redemption proceeds — these never appear in
+    # /trades since they're on-chain redeemPositions calls, not CLOB trades.
+    # Without this, every redeemed position looked like a $0-proceeds loss.
+    redemptions_by_token: dict[str, float] = {}
+    redemption_shares_by_token: dict[str, float] = {}
+    try:
+        activity = await get_user_activity(user_address)
+    except Exception as exc:
+        log.warning("User activity fetch failed: %s", exc)
+        activity = []
+    for a in activity:
+        atype = str(a.get("type") or "").upper()
+        if atype not in ("REDEEM", "REDEMPTION", "REDEEMED"):
+            continue
+        token = str(a.get("asset") or a.get("tokenId") or "")
+        if not token:
+            continue
+        # USDC received: try several common field names
+        cash_raw = (
+            a.get("usdcAmount")
+            or a.get("usdcSize")
+            or a.get("cashAmount")
+            or a.get("value")
+            or a.get("amount")
+        )
+        try:
+            cash = float(cash_raw) if cash_raw is not None else None
+        except (TypeError, ValueError):
+            cash = None
+        # Number of shares redeemed (used if cash field is missing — winning
+        # shares pay $1 each on Polymarket)
+        size_raw = a.get("size") or a.get("shares")
+        try:
+            size = float(size_raw) if size_raw is not None else 0.0
+        except (TypeError, ValueError):
+            size = 0.0
+        if cash is None and size > 0:
+            cash = size  # winning redemption = shares × $1
+        if cash is not None and cash > 0:
+            redemptions_by_token[token] = redemptions_by_token.get(token, 0.0) + cash
+        if size > 0:
+            redemption_shares_by_token[token] = redemption_shares_by_token.get(token, 0.0) + size
+
     def _token_side(condition_id: str, token_id: str) -> str:
         """Return 'YES' or 'NO' for this token within the market, or '' if unknown."""
         m = side_map.get(condition_id)
@@ -641,8 +685,21 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         proceeds = d["sell_value"]
         exit_kind = "ui_sell" if d["sell_value"] > 0 else "unknown"
         cid = d["condition_id"] or ""
-        side = _token_side(cid, token) or d.get("outcome", "")  # Gamma first, data-api fallback
-        if net_shares > 0.01 and cid:
+        side = _token_side(cid, token) or d.get("outcome", "")
+
+        # Add any redemption proceeds from /activity feed (winning redeems
+        # show up here, not in /trades).
+        redeem_cash = redemptions_by_token.get(token, 0.0)
+        redeem_shares = redemption_shares_by_token.get(token, 0.0)
+        if redeem_cash > 0:
+            proceeds += redeem_cash
+            exit_kind = "redeemed_win" if redeem_cash > 0 else "redeemed_loss"
+
+        # Fallback: if we have remaining shares with no SELL or REDEEM cash,
+        # ask Gamma if the market resolved and compute payout from winner.
+        # Covers losing redeems too (where Polymarket may not emit USDC events).
+        remaining = net_shares - redeem_shares
+        if remaining > 0.01 and redeem_cash == 0 and cid:
             try:
                 info = await get_market_resolution(cid)
             except Exception:
@@ -651,12 +708,13 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
                 winner = info.get("winner")
                 if winner and side:
                     if winner == side:
-                        proceeds += net_shares * 1.0
+                        proceeds += remaining * 1.0
                         exit_kind = "redeemed_win"
                     else:
                         exit_kind = "redeemed_loss"
                 else:
                     exit_kind = "resolved_unknown"
+
         pnl = proceeds - d["buy_value"]
         closed.append({
             "token_id": token,
@@ -666,6 +724,7 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
             "pnl": round(pnl, 4),
             "buy_value": round(d["buy_value"], 4),
             "sell_value": round(d["sell_value"], 4),
+            "redeem_value": round(redeem_cash, 4),
             "won": pnl > 0,
             "exit_kind": exit_kind,
         })

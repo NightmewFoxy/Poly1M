@@ -954,6 +954,24 @@ async def get_market_game_start_times(condition_ids: list[str]) -> dict[str, str
 
 
 @retry(**_HTTP_RETRY)
+async def get_user_activity(user_address: str) -> list[dict[str, Any]]:
+    """Pull the broader /activity feed (includes REDEEM/REDEMPTION events,
+    which never appear in /trades). Each redeem event carries the USDC
+    received back when the user redeemed shares of a resolved market.
+
+    Without this, the bot reads SELL trades only and treats every
+    redeemed position as zero-proceeds (i.e. a full loss).
+    """
+    url = f"{config.DATA_API_HOST}/activity"
+    params = {"user": user_address, "limit": 500}
+    async with httpx.AsyncClient(timeout=30) as ac:
+        r = await ac.get(url, params=params)
+        r.raise_for_status()
+        rows = r.json()
+    return rows or []
+
+
+@retry(**_HTTP_RETRY)
 async def get_user_trades(user_address: str) -> list[dict[str, Any]]:
     """All on-chain trades for this proxy address, newest first.
 
