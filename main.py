@@ -483,6 +483,94 @@ async def _count_total_buys(user_address: str) -> int:
     return sum(1 for t in trades if str(t.get("side") or "").upper() == "BUY")
 
 
+async def _reconstruct_account_pnl(user_address: str) -> list[dict[str, Any]]:
+    """Pull every CLOB trade for the proxy from data-api, pair buys & sells
+    per token_id, and infer redemption proceeds for fully-exited positions
+    via Gamma market resolution.
+
+    Returns one record per CLOSED position (still-held positions skipped).
+    Independent of positions.json — gives the user's REAL lifetime PnL.
+    """
+    from polymarket_client import get_market_resolution
+
+    try:
+        trades = await get_user_trades(user_address)
+    except Exception as exc:
+        log.warning("Account PnL: trades fetch failed: %s", exc)
+        return []
+
+    by_token: dict[str, dict[str, Any]] = {}
+    for t in trades:
+        token = str(t.get("asset") or t.get("tokenId") or "")
+        if not token:
+            continue
+        side = str(t.get("side") or "").upper()
+        try:
+            price = float(t.get("price") or 0)
+            size = float(t.get("size") or 0)
+        except (TypeError, ValueError):
+            continue
+        d = by_token.setdefault(token, {
+            "condition_id": (t.get("conditionId") or t.get("condition_id") or ""),
+            "outcome": str(t.get("outcome") or "").upper(),
+            "title": (t.get("title") or t.get("eventTitle") or t.get("question") or "")[:80],
+            "buy_value": 0.0, "buy_shares": 0.0,
+            "sell_value": 0.0, "sell_shares": 0.0,
+            "first_price": None,
+        })
+        # capture entry price for context (first BUY)
+        if side == "BUY":
+            d["buy_value"] += price * size
+            d["buy_shares"] += size
+            if d["first_price"] is None and price > 0:
+                d["first_price"] = price
+        elif side == "SELL":
+            d["sell_value"] += price * size
+            d["sell_shares"] += size
+
+    try:
+        held = await get_onchain_position_tokens(user_address)
+    except Exception:
+        held = set()
+
+    closed: list[dict[str, Any]] = []
+    for token, d in by_token.items():
+        if token in held:
+            continue  # still open, skip
+        net_shares = d["buy_shares"] - d["sell_shares"]
+        proceeds = d["sell_value"]
+        exit_kind = "ui_sell" if d["sell_value"] > 0 else "unknown"
+        if net_shares > 0.01 and d["condition_id"]:
+            try:
+                info = await get_market_resolution(d["condition_id"])
+            except Exception:
+                info = None
+            if info and info.get("closed"):
+                winner = info.get("winner")
+                outcome = d.get("outcome", "")
+                if winner and outcome:
+                    if winner == outcome:
+                        proceeds += net_shares * 1.0
+                        exit_kind = "redeemed_win"
+                    else:
+                        exit_kind = "redeemed_loss"
+                else:
+                    exit_kind = "resolved_unknown"
+        pnl = proceeds - d["buy_value"]
+        closed.append({
+            "token_id": token,
+            "title": d["title"] or "?",
+            "outcome": d["outcome"],
+            "entry_price": d["first_price"],
+            "pnl": round(pnl, 4),
+            "buy_value": round(d["buy_value"], 4),
+            "sell_value": round(d["sell_value"], 4),
+            "won": pnl > 0,
+            "exit_kind": exit_kind,
+        })
+    return closed
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -550,6 +638,14 @@ async def main_async() -> None:
         await tg.notify_history(enriched, local_buys=local_buys, onchain_buys=onchain_buys)
     except Exception as exc:
         log.warning("History Telegram report failed: %s", exc)
+
+    # Full lifetime PnL reconstructed straight from on-chain /trades
+    # (positions.json-independent). Answers "what's my real account history".
+    try:
+        account_closed = await _reconstruct_account_pnl(config.POLYMARKET_FUNDER_ADDRESS)
+        await tg.notify_account_pnl(account_closed)
+    except Exception as exc:
+        log.warning("Account PnL Telegram report failed: %s", exc)
 
     while not _shutdown.is_set():
         try:

@@ -299,6 +299,79 @@ async def notify_history(
     await _send(text)
 
 
+async def notify_account_pnl(closed: list[dict]) -> None:
+    """Lifetime account PnL reconstructed from data-api /trades + Gamma
+    resolution. Independent of positions.json — answers 'how have I really
+    done across every trade in this wallet, ever'."""
+    if not closed:
+        await _send("📊 ACCOUNT PNL\n\nNo closed positions on-chain.")
+        return
+
+    wins = [r for r in closed if float(r.get("pnl") or 0) > 0]
+    losses = [r for r in closed if float(r.get("pnl") or 0) < 0]
+    flat = [r for r in closed if float(r.get("pnl") or 0) == 0]
+    total_pnl = sum(float(r.get("pnl") or 0) for r in closed)
+    total_buy = sum(float(r.get("buy_value") or 0) for r in closed)
+    roi = (total_pnl / total_buy * 100) if total_buy > 0 else 0
+    wr = len(wins) / len(closed) * 100 if closed else 0
+
+    lines = [
+        "📊 LIFETIME ACCOUNT PNL",
+        "(reconstructed from on-chain /trades, independent of bot state)",
+        "",
+        "📈 Summary",
+        f"Closed positions: {len(closed)}  ·  ✅ {len(wins)}W  ·  ❌ {len(losses)}L  ·  ➖ {len(flat)} flat",
+        f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_buy:.2f} invested ({roi:+.1f}% ROI)",
+        f"Win rate: {wr:.0f}%",
+        "",
+    ]
+
+    # Top wins / worst losses
+    top_wins = sorted(wins, key=lambda r: -float(r.get("pnl") or 0))[:5]
+    top_losses = sorted(losses, key=lambda r: float(r.get("pnl") or 0))[:5]
+
+    if top_wins:
+        lines.append("🏆 Top wins")
+        for r in top_wins:
+            pnl = float(r["pnl"])
+            title = (r.get("title") or "?")[:55]
+            ep = r.get("entry_price")
+            ep_str = f" @ ${ep:.2f}" if isinstance(ep, (int, float)) else ""
+            lines.append(f"  +${pnl:.2f}  {title}{ep_str}")
+        lines.append("")
+
+    if top_losses:
+        lines.append("💀 Worst losses")
+        for r in top_losses:
+            pnl = float(r["pnl"])
+            title = (r.get("title") or "?")[:55]
+            ep = r.get("entry_price")
+            ep_str = f" @ ${ep:.2f}" if isinstance(ep, (int, float)) else ""
+            lines.append(f"  -${abs(pnl):.2f}  {title}{ep_str}")
+        lines.append("")
+
+    # Exit-kind breakdown — helps user understand what closed how
+    by_kind: dict[str, int] = {}
+    for r in closed:
+        by_kind[r.get("exit_kind", "?")] = by_kind.get(r.get("exit_kind", "?"), 0) + 1
+    if by_kind:
+        lines.append("🔍 How positions closed")
+        for k, c in sorted(by_kind.items(), key=lambda x: -x[1]):
+            label = {
+                "ui_sell": "Sold in UI",
+                "redeemed_win": "Redeemed (won)",
+                "redeemed_loss": "Redeemed (lost)",
+                "resolved_unknown": "Resolved (winner unknown)",
+                "unknown": "Closed (no trace)",
+            }.get(k, k)
+            lines.append(f"  {label}: {c}")
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3900] + "\n… (truncated)"
+    await _send(text)
+
+
 async def notify_no_ev_cycle(scanned: int) -> None:
     await _send(f"😴 Cycle done — no +EV markets (scanned {scanned} candidates)")
 
