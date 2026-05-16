@@ -304,10 +304,12 @@ async def notify_account_pnl(
     excluded_extreme: int = 0,
     excluded_live: int = 0,
     excluded_both_sides: int = 0,
+    excluded_non_esports: int = 0,
     debug_sources: dict | None = None,
     debug_pm_rows: int = 0,
     debug_pm_with_pnl: int = 0,
     debug_activity_events: int = 0,
+    debug_activity_types: dict | None = None,
 ) -> None:
     """Lifetime account PnL reconstructed from data-api /trades + Gamma
     resolution. Independent of positions.json — answers 'how have I really
@@ -317,15 +319,16 @@ async def notify_account_pnl(
     excluded_live: trades filtered for placement AFTER game start time
     excluded_both_sides: trades filtered when both YES and NO bet on same market
     """
-    excl_total = excluded_extreme + excluded_live + excluded_both_sides
+    excl_total = excluded_extreme + excluded_live + excluded_both_sides + excluded_non_esports
     if not closed:
         body = "📊 ACCOUNT PNL\n\nNo closed positions on-chain (after filters)."
         if excl_total:
             body += (
-                f"\n\nExcluded as bot errors: {excl_total}"
+                f"\n\nExcluded: {excl_total}"
                 f" (extreme price: {excluded_extreme}, "
                 f"live entry: {excluded_live}, "
-                f"both sides: {excluded_both_sides})"
+                f"both sides: {excluded_both_sides}, "
+                f"non-esports: {excluded_non_esports})"
             )
         await _send(body)
         return
@@ -349,10 +352,11 @@ async def notify_account_pnl(
     ]
     if excl_total:
         lines.append(
-            f"🚫 Excluded as bot errors: {excl_total} "
+            f"🚫 Excluded: {excl_total} "
             f"(extreme price: {excluded_extreme}, "
             f"live entry: {excluded_live}, "
-            f"both sides: {excluded_both_sides})"
+            f"both sides: {excluded_both_sides}, "
+            f"non-esports: {excluded_non_esports})"
         )
     lines.append("")
 
@@ -385,6 +389,11 @@ async def notify_account_pnl(
         lines.append("🔬 Data source diagnostics")
         lines.append(f"  Polymarket /positions rows: {debug_pm_rows} ({debug_pm_with_pnl} with realizedPnl)")
         lines.append(f"  /activity events: {debug_activity_events}")
+        if debug_activity_types:
+            # Show which event types Polymarket actually returns so we can fix
+            # the redeem matcher if the type strings don't include 'redeem'
+            top_types = sorted(debug_activity_types.items(), key=lambda x: -x[1])[:8]
+            lines.append(f"  /activity types: {', '.join(f'{k}={v}' for k, v in top_types)}")
         if debug_sources:
             for k, v in sorted(debug_sources.items(), key=lambda x: -x[1]):
                 lines.append(f"  Per-trade source '{k}': {v}")

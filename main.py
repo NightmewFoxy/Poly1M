@@ -515,20 +515,33 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
     per token_id, and infer redemption proceeds for fully-exited positions
     via Gamma market resolution.
 
-    Filters out two classes of bot-error trades that don't represent the
-    current strategy:
+    Filters out three classes of bot-error trades:
       - extreme entry prices (>=$0.95 or <=$0.05) — early calibration bugs
-      - entries placed AFTER the game's start time — fixed in a later commit
+      - entries placed AFTER the game's start time — pre-live-check trades
+      - both YES and NO bet on same market — duplicate-side bug
+    Also filters to ESPORTS markets only by intersecting with conditionIds
+    the bot ever recorded in positions.json (bot only opens esports markets,
+    so anything outside that set is a manual UI trade).
 
-    Returns {"closed": [...], "excluded_extreme": N, "excluded_live": N}.
+    Returns {"closed": [...], "excluded_extreme": N, "excluded_live": N, ...}.
     """
     from polymarket_client import get_market_resolution
+
+    # Build the bot-known set: conditionIds the bot itself ever traded.
+    # Manual UI trades on non-esports markets (Bitcoin minutes, Beast Games,
+    # etc.) won't be in this set and get filtered out.
+    bot_known_cids = {
+        str(p.get("condition_id") or "")
+        for p in positions.list_open() + positions.list_resolved()
+        if p.get("condition_id")
+    }
+    bot_known_cids.discard("")
 
     try:
         trades = await get_user_trades(user_address)
     except Exception as exc:
         log.warning("Account PnL: trades fetch failed: %s", exc)
-        return {"closed": [], "excluded_extreme": 0, "excluded_live": 0}
+        return {"closed": [], "excluded_extreme": 0, "excluded_live": 0, "excluded_both_sides": 0, "excluded_non_esports": 0}
 
     by_token: dict[str, dict[str, Any]] = {}
     for t in trades:
@@ -592,13 +605,20 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
     excluded_extreme = 0
     excluded_live = 0
     excluded_both_sides = 0
+    excluded_non_esports = 0
     filtered: dict[str, dict[str, Any]] = {}
     for token, d in by_token.items():
+        cid = d.get("condition_id") or ""
+        # Esports-only filter: must be a market the bot itself traded.
+        # The bot's discover_markets queries by tag_slug=esports, so any
+        # conditionId outside positions.json is a non-esports manual trade.
+        if bot_known_cids and cid and cid not in bot_known_cids:
+            excluded_non_esports += 1
+            continue
         fp = d.get("first_price")
         if fp is not None and (fp >= 0.95 or fp <= 0.05):
             excluded_extreme += 1
             continue
-        cid = d.get("condition_id") or ""
         buy_dt = _parse_ts(d.get("first_buy_ts"))
         gst = start_times.get(cid)
         if buy_dt is not None and gst is not None and buy_dt >= gst:
@@ -658,43 +678,52 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
             "outcome": str(p.get("outcome") or "").upper(),
         }
 
-    # Secondary: /activity for REDEEM events (fallback if Polymarket /positions
-    # didn't carry realizedPnl on a row). Best-effort.
+    # Secondary: /activity for REDEEM events. Polymarket's `type` field uses
+    # uncertain casing/naming — be very permissive (match anything containing
+    # 'redeem' case-insensitive). Also collect unique type strings for the
+    # diagnostic so we can see what Polymarket actually returns.
     redemptions_by_token: dict[str, float] = {}
     redemption_shares_by_token: dict[str, float] = {}
+    activity_type_counts: dict[str, int] = {}
     try:
         activity = await get_user_activity(user_address)
     except Exception as exc:
         log.warning("User activity fetch failed: %s", exc)
         activity = []
     for a in activity:
-        atype = str(a.get("type") or "").upper()
-        if atype not in ("REDEEM", "REDEMPTION", "REDEEMED"):
+        atype = str(a.get("type") or "").strip()
+        activity_type_counts[atype or "<empty>"] = activity_type_counts.get(atype or "<empty>", 0) + 1
+        is_redeem = "redeem" in atype.lower() or atype.lower() in ("redemption", "claim", "settle")
+        if not is_redeem:
             continue
-        token = str(a.get("asset") or a.get("tokenId") or "")
+        token = str(a.get("asset") or a.get("tokenId") or a.get("token") or "")
         if not token:
             continue
-        # USDC received: try several common field names
-        cash_raw = (
-            a.get("usdcAmount")
-            or a.get("usdcSize")
-            or a.get("cashAmount")
-            or a.get("value")
-            or a.get("amount")
-        )
-        try:
-            cash = float(cash_raw) if cash_raw is not None else None
-        except (TypeError, ValueError):
-            cash = None
-        # Number of shares redeemed (used if cash field is missing — winning
-        # shares pay $1 each on Polymarket)
-        size_raw = a.get("size") or a.get("shares")
-        try:
-            size = float(size_raw) if size_raw is not None else 0.0
-        except (TypeError, ValueError):
-            size = 0.0
-        if cash is None and size > 0:
-            cash = size  # winning redemption = shares × $1
+        # Try many candidate field names for USDC received
+        cash = None
+        for k in (
+            "usdcAmount", "usdcSize", "cashAmount", "cash", "value",
+            "amount", "valueUsd", "usdValue", "totalUsd",
+        ):
+            v = a.get(k)
+            if v is not None:
+                try:
+                    cash = float(v)
+                    break
+                except (TypeError, ValueError):
+                    pass
+        size = 0.0
+        for k in ("size", "shares", "quantity", "amountShares"):
+            v = a.get(k)
+            if v is not None:
+                try:
+                    size = float(v)
+                    break
+                except (TypeError, ValueError):
+                    pass
+        # Winning redemption pays $1/share; if Polymarket reports both we
+        # trust cash. If only size: assume worst case it could be a losing
+        # redeem and not credit anything — Gamma fallback will catch wins.
         if cash is not None and cash > 0:
             redemptions_by_token[token] = redemptions_by_token.get(token, 0.0) + cash
         if size > 0:
@@ -799,10 +828,12 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         "excluded_extreme": excluded_extreme,
         "excluded_live": excluded_live,
         "excluded_both_sides": excluded_both_sides,
+        "excluded_non_esports": excluded_non_esports,
         "debug_sources": by_source,
         "debug_pm_rows": len(pm_pnl_by_token),
         "debug_pm_with_pnl": pm_with_realized,
         "debug_activity_events": len(activity),
+        "debug_activity_types": activity_type_counts,
     }
 
 
@@ -904,10 +935,12 @@ async def main_async() -> None:
             excluded_extreme=account_data.get("excluded_extreme", 0),
             excluded_live=account_data.get("excluded_live", 0),
             excluded_both_sides=account_data.get("excluded_both_sides", 0),
+            excluded_non_esports=account_data.get("excluded_non_esports", 0),
             debug_sources=account_data.get("debug_sources", {}),
             debug_pm_rows=account_data.get("debug_pm_rows", 0),
             debug_pm_with_pnl=account_data.get("debug_pm_with_pnl", 0),
             debug_activity_events=account_data.get("debug_activity_events", 0),
+            debug_activity_types=account_data.get("debug_activity_types", {}),
         )
     except Exception as exc:
         log.warning("Account PnL Telegram report failed: %s", exc)
