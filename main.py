@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import traceback
+from datetime import datetime, timezone
 from typing import Any
 
 import config
@@ -29,12 +30,35 @@ from polymarket_client import (
     fetch_market_trade_safety,
     filter_esports_tradeable,
     get_best_ask,
+    get_market_game_start_times,
     get_market_meta,
     get_onchain_position_tokens,
     get_usdc_balance,
     get_user_trades,
     place_market_buy,
 )
+
+
+def _parse_ts(val: Any) -> "datetime | None":
+    """Best-effort parse of unix-seconds or ISO-8601 timestamps to UTC datetime."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(val), tz=timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
+    if isinstance(val, str):
+        s = val.strip()
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+        try:
+            return datetime.fromtimestamp(float(s), tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+    return None
 from research import TradeIdea, potential_profit_net, research_and_score
 
 log = get_logger(__name__)
@@ -483,13 +507,17 @@ async def _count_total_buys(user_address: str) -> int:
     return sum(1 for t in trades if str(t.get("side") or "").upper() == "BUY")
 
 
-async def _reconstruct_account_pnl(user_address: str) -> list[dict[str, Any]]:
+async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
     """Pull every CLOB trade for the proxy from data-api, pair buys & sells
     per token_id, and infer redemption proceeds for fully-exited positions
     via Gamma market resolution.
 
-    Returns one record per CLOSED position (still-held positions skipped).
-    Independent of positions.json — gives the user's REAL lifetime PnL.
+    Filters out two classes of bot-error trades that don't represent the
+    current strategy:
+      - extreme entry prices (>=$0.95 or <=$0.05) — early calibration bugs
+      - entries placed AFTER the game's start time — fixed in a later commit
+
+    Returns {"closed": [...], "excluded_extreme": N, "excluded_live": N}.
     """
     from polymarket_client import get_market_resolution
 
@@ -497,7 +525,7 @@ async def _reconstruct_account_pnl(user_address: str) -> list[dict[str, Any]]:
         trades = await get_user_trades(user_address)
     except Exception as exc:
         log.warning("Account PnL: trades fetch failed: %s", exc)
-        return []
+        return {"closed": [], "excluded_extreme": 0, "excluded_live": 0}
 
     by_token: dict[str, dict[str, Any]] = {}
     for t in trades:
@@ -517,16 +545,53 @@ async def _reconstruct_account_pnl(user_address: str) -> list[dict[str, Any]]:
             "buy_value": 0.0, "buy_shares": 0.0,
             "sell_value": 0.0, "sell_shares": 0.0,
             "first_price": None,
+            "first_buy_ts": None,
         })
-        # capture entry price for context (first BUY)
         if side == "BUY":
             d["buy_value"] += price * size
             d["buy_shares"] += size
             if d["first_price"] is None and price > 0:
                 d["first_price"] = price
+            # first BUY timestamp; data-api varies in field name
+            ts = (
+                t.get("timestamp") or t.get("time") or t.get("tradeTime")
+                or t.get("createdAt") or t.get("matchTime")
+            )
+            if d["first_buy_ts"] is None and ts is not None:
+                d["first_buy_ts"] = ts
         elif side == "SELL":
             d["sell_value"] += price * size
             d["sell_shares"] += size
+
+    # Batch-fetch gameStartTime for live-entry filtering
+    cond_ids = [d["condition_id"] for d in by_token.values() if d.get("condition_id")]
+    try:
+        start_times_raw = await get_market_game_start_times(list(set(cond_ids)))
+    except Exception as exc:
+        log.warning("gameStartTime batch fetch failed: %s", exc)
+        start_times_raw = {}
+    start_times: dict[str, "datetime"] = {}
+    for cid, raw in start_times_raw.items():
+        dt = _parse_ts(raw)
+        if dt is not None:
+            start_times[cid] = dt
+
+    # Apply exclusion filters
+    excluded_extreme = 0
+    excluded_live = 0
+    filtered: dict[str, dict[str, Any]] = {}
+    for token, d in by_token.items():
+        fp = d.get("first_price")
+        if fp is not None and (fp >= 0.95 or fp <= 0.05):
+            excluded_extreme += 1
+            continue
+        cid = d.get("condition_id") or ""
+        buy_dt = _parse_ts(d.get("first_buy_ts"))
+        gst = start_times.get(cid)
+        if buy_dt is not None and gst is not None and buy_dt >= gst:
+            excluded_live += 1
+            continue
+        filtered[token] = d
 
     try:
         held = await get_onchain_position_tokens(user_address)
@@ -534,9 +599,9 @@ async def _reconstruct_account_pnl(user_address: str) -> list[dict[str, Any]]:
         held = set()
 
     closed: list[dict[str, Any]] = []
-    for token, d in by_token.items():
+    for token, d in filtered.items():
         if token in held:
-            continue  # still open, skip
+            continue
         net_shares = d["buy_shares"] - d["sell_shares"]
         proceeds = d["sell_value"]
         exit_kind = "ui_sell" if d["sell_value"] > 0 else "unknown"
@@ -568,7 +633,11 @@ async def _reconstruct_account_pnl(user_address: str) -> list[dict[str, Any]]:
             "won": pnl > 0,
             "exit_kind": exit_kind,
         })
-    return closed
+    return {
+        "closed": closed,
+        "excluded_extreme": excluded_extreme,
+        "excluded_live": excluded_live,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -642,8 +711,12 @@ async def main_async() -> None:
     # Full lifetime PnL reconstructed straight from on-chain /trades
     # (positions.json-independent). Answers "what's my real account history".
     try:
-        account_closed = await _reconstruct_account_pnl(config.POLYMARKET_FUNDER_ADDRESS)
-        await tg.notify_account_pnl(account_closed)
+        account_data = await _reconstruct_account_pnl(config.POLYMARKET_FUNDER_ADDRESS)
+        await tg.notify_account_pnl(
+            account_data.get("closed", []),
+            excluded_extreme=account_data.get("excluded_extreme", 0),
+            excluded_live=account_data.get("excluded_live", 0),
+        )
     except Exception as exc:
         log.warning("Account PnL Telegram report failed: %s", exc)
 

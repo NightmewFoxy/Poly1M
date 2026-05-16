@@ -299,12 +299,27 @@ async def notify_history(
     await _send(text)
 
 
-async def notify_account_pnl(closed: list[dict]) -> None:
+async def notify_account_pnl(
+    closed: list[dict],
+    excluded_extreme: int = 0,
+    excluded_live: int = 0,
+) -> None:
     """Lifetime account PnL reconstructed from data-api /trades + Gamma
     resolution. Independent of positions.json — answers 'how have I really
-    done across every trade in this wallet, ever'."""
+    done across every trade in this wallet, ever'.
+
+    excluded_extreme: trades filtered for entry price >=$0.95 or <=$0.05
+    excluded_live: trades filtered for placement AFTER game start time
+    """
+    excl_total = excluded_extreme + excluded_live
     if not closed:
-        await _send("📊 ACCOUNT PNL\n\nNo closed positions on-chain.")
+        body = "📊 ACCOUNT PNL\n\nNo closed positions on-chain (after filters)."
+        if excl_total:
+            body += (
+                f"\n\nExcluded as bot errors: {excl_total}"
+                f" (extreme price: {excluded_extreme}, live entry: {excluded_live})"
+            )
+        await _send(body)
         return
 
     wins = [r for r in closed if float(r.get("pnl") or 0) > 0]
@@ -323,8 +338,13 @@ async def notify_account_pnl(closed: list[dict]) -> None:
         f"Closed positions: {len(closed)}  ·  ✅ {len(wins)}W  ·  ❌ {len(losses)}L  ·  ➖ {len(flat)} flat",
         f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_buy:.2f} invested ({roi:+.1f}% ROI)",
         f"Win rate: {wr:.0f}%",
-        "",
     ]
+    if excl_total:
+        lines.append(
+            f"🚫 Excluded as bot errors: {excl_total} "
+            f"(extreme price: {excluded_extreme}, live entry: {excluded_live})"
+        )
+    lines.append("")
 
     # Top wins / worst losses
     top_wins = sorted(wins, key=lambda r: -float(r.get("pnl") or 0))[:5]

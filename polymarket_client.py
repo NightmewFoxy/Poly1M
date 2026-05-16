@@ -892,6 +892,27 @@ async def get_market_resolution(condition_id: str) -> dict[str, Any] | None:
 
 
 @retry(**_HTTP_RETRY)
+async def get_market_game_start_times(condition_ids: list[str]) -> dict[str, str]:
+    """Batch-fetch gameStartTime for a set of condition_ids from Gamma.
+    Returns {condition_id: iso_or_unix_ts}. Missing markets just omit.
+    """
+    out: dict[str, str] = {}
+    # Gamma accepts comma-separated condition_ids; batch in groups of 50
+    for i in range(0, len(condition_ids), 50):
+        batch = condition_ids[i : i + 50]
+        try:
+            rows = await _gamma_get("/markets", {"condition_ids": ",".join(batch)})
+        except Exception:
+            continue
+        for m in rows or []:
+            cid = m.get("conditionId") or m.get("condition_id")
+            gst = m.get("gameStartTime") or m.get("startTime") or m.get("game_start_time")
+            if cid and gst:
+                out[str(cid)] = str(gst)
+    return out
+
+
+@retry(**_HTTP_RETRY)
 async def get_user_trades(user_address: str) -> list[dict[str, Any]]:
     """All on-chain trades for this proxy address, newest first.
 
