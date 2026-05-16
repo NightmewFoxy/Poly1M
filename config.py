@@ -95,7 +95,7 @@ MIN_GAP_PP = float(_opt("MIN_GAP_PP", "3"))
 # for a new idea whose pp gap exceeds it by >= ROTATION_MIN_PP_IMPROVEMENT.
 # Set high enough to clear the round-trip fees (~$0.30) on rotation. Below
 # +5pp, the gain from rotating doesn't beat the spread+fee cost.
-ROTATION_ENABLED = _opt("ROTATION_ENABLED", "true").lower() not in ("false", "0", "no", "off")
+ROTATION_ENABLED = _opt("ROTATION_ENABLED", "false").lower() not in ("false", "0", "no", "off")
 ROTATION_MIN_PP_IMPROVEMENT = float(_opt("ROTATION_MIN_PP_IMPROVEMENT", "5"))
 ROTATION_MAX_PER_CYCLE = int(_opt("ROTATION_MAX_PER_CYCLE", "2"))
 MIN_HOURS_TO_RESOLUTION = float(_opt("MIN_HOURS_TO_RESOLUTION", "2"))
