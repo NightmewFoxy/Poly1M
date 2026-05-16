@@ -439,7 +439,48 @@ async def _enrich_with_realised_pnl(
         stake = float(r.get("stake_usd") or 0)
         pnl = proceeds - stake
         enriched[i] = {**r, "pnl": round(pnl, 4), "won": pnl > 0, "exit_kind": "ui_sell"}
+
+    # Step 2: for records still without PnL, ask Gamma if the market resolved.
+    # If yes, the position was likely redeemed (not sold) — compute PnL from
+    # won/lost. Covers the common case where you redeemed in the UI.
+    from polymarket_client import get_market_resolution
+    for i, r in enumerate(enriched):
+        if r.get("pnl") is not None:
+            continue
+        cond_id = r.get("condition_id")
+        if not cond_id:
+            continue
+        try:
+            info = await get_market_resolution(cond_id)
+        except Exception:
+            continue
+        if not info or not info.get("closed"):
+            continue
+        winner = info.get("winner")
+        shares = float(r.get("shares") or 0)
+        stake = float(r.get("stake_usd") or 0)
+        if winner is None:
+            # Resolved invalid — assume full loss
+            enriched[i] = {**r, "pnl": round(-stake, 4), "won": False, "exit_kind": "invalid"}
+            continue
+        won = winner == r.get("side")
+        if won:
+            pnl = (1 - config.POLYMARKET_FEE) * (shares - stake)
+        else:
+            pnl = -stake
+        enriched[i] = {**r, "pnl": round(pnl, 4), "won": won, "exit_kind": "redeemed"}
     return enriched
+
+
+async def _count_total_buys(user_address: str) -> int:
+    """How many BUY trades has this proxy ever made on-chain? Tells the user
+    whether positions.json has captured everything or whether the volume was
+    unmounted at some point and earlier trades were lost from local state."""
+    try:
+        trades = await get_user_trades(user_address)
+    except Exception:
+        return -1
+    return sum(1 for t in trades if str(t.get("side") or "").upper() == "BUY")
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +533,9 @@ async def main_async() -> None:
         enriched = await _enrich_with_realised_pnl(
             resolved_records, config.POLYMARKET_FUNDER_ADDRESS
         )
-        await tg.notify_history(enriched)
+        local_buys = len(resolved_records) + positions.open_count()
+        onchain_buys = await _count_total_buys(config.POLYMARKET_FUNDER_ADDRESS)
+        await tg.notify_history(enriched, local_buys=local_buys, onchain_buys=onchain_buys)
     except Exception as exc:
         log.warning("History Telegram report failed: %s", exc)
 

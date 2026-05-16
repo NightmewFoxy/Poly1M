@@ -113,20 +113,27 @@ async def notify_redeem_needed(position: dict, payout_usd: float) -> None:
     await _send(msg)
 
 
-async def notify_history(resolved: list[dict]) -> None:
+async def notify_history(
+    resolved: list[dict],
+    local_buys: int | None = None,
+    onchain_buys: int | None = None,
+) -> None:
     """Boot-time summary of every resolved trade.
 
-    Each record may have:
-      - pnl/won set: natural resolution (bot saw market close)
-      - reconciled=True with pnl/won computed by main from data-api sells
-      - reconciled=True with no PnL (couldn't determine — UI exit, no sell trade
-        matched, or redeemed at $1 we don't have visibility into)
+    local_buys: count of BUY trades the bot has recorded in positions.json (open + resolved).
+    onchain_buys: count of BUY trades on data-api for this proxy address.
+    A gap means earlier trades aren't in positions.json (volume unmounted, fresh deploy, etc.).
     """
     if not resolved:
-        await _send(
-            "📜 TRADE HISTORY\n\nNo resolved trades yet. The bot has not seen "
-            "a single position through to market resolution or sell."
-        )
+        msg = "📜 TRADE HISTORY\n\nNo resolved trades yet."
+        if onchain_buys is not None and onchain_buys >= 0:
+            msg += f"\n\nOn-chain BUYs ever made: {onchain_buys}."
+            if local_buys is not None and onchain_buys > local_buys:
+                msg += (
+                    f"\n⚠️ Bot only knows about {local_buys} of them — "
+                    "positions.json was probably wiped or volume unmounted at some point."
+                )
+        await _send(msg)
         return
 
     with_pnl = [r for r in resolved if r.get("pnl") is not None]
@@ -134,7 +141,20 @@ async def notify_history(resolved: list[dict]) -> None:
 
     lines = ["📜 TRADE HISTORY", ""]
 
-    # --- Summary stats over the trades we have PnL for
+    # --- Lifetime trade audit (positions.json vs on-chain reality)
+    if onchain_buys is not None and onchain_buys >= 0:
+        lines.append("🔎 Lifetime audit")
+        lines.append(f"On-chain BUYs ever: {onchain_buys}")
+        if local_buys is not None:
+            lines.append(f"In positions.json: {local_buys}")
+            if onchain_buys > local_buys:
+                missing = onchain_buys - local_buys
+                lines.append(
+                    f"⚠️ {missing} earlier trades NOT in positions.json (volume drift / fresh deploys)."
+                )
+        lines.append("")
+
+    # --- Summary stats — make small-sample warnings very loud
     if with_pnl:
         wins = [r for r in with_pnl if (r.get("won") is True or float(r.get("pnl") or 0) > 0)]
         total_pnl = sum(float(r.get("pnl") or 0) for r in with_pnl)
@@ -146,16 +166,25 @@ async def notify_history(resolved: list[dict]) -> None:
             for r in with_pnl
         ) / len(with_pnl) * 100
         roi = (total_pnl / total_stake * 100) if total_stake > 0 else 0
+        coverage = len(with_pnl) / len(resolved) * 100 if resolved else 0
         lines += [
-            "📊 Summary (trades with PnL)",
+            f"📊 Summary (over {len(with_pnl)} of {len(resolved)} closed positions = {coverage:.0f}% coverage)",
             f"Trades: {len(with_pnl)} · Profitable: {len(wins)} · Losing: {len(with_pnl) - len(wins)}",
             f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_stake:.2f} staked ({roi:+.1f}% ROI)",
             f"Win rate: {win_rate:.0f}% (model expected ~{avg_true:.0f}%)",
-            f"Average edge per trade: +{avg_gap:.1f}pp (true_prob − price)",
-            "",
+            f"Average edge per trade: +{avg_gap:.1f}pp (percentage points = true_prob − market_price)",
         ]
+        if len(with_pnl) < 30:
+            lines.append(
+                f"⚠️ Sample size is only {len(with_pnl)} — not statistically meaningful. "
+                "Need ~30+ trades before these numbers reflect real performance."
+            )
+        lines.append("")
     if without_pnl:
-        lines.append(f"⚠️  {len(without_pnl)} trades have no PnL data (UI exits without matchable sell trade)")
+        lines.append(
+            f"⚠️  {len(without_pnl)} trades still have no PnL (no matching CLOB sell, "
+            "Gamma resolution missing, or token_id mismatch)"
+        )
         lines.append("")
 
     # --- Per-trade list
