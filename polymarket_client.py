@@ -866,7 +866,13 @@ async def place_market_buy(
 async def get_market_resolution(condition_id: str) -> dict[str, Any] | None:
     """Look up a market by conditionId; return resolution info if closed/resolved.
 
-    Returns None while still active.
+    Treats a market as resolved if ANY of:
+      - Gamma's `closed` field is true
+      - `archived` is true
+      - outcomePrices already shows a clear winner ([1,0] or [0,1])
+      - umaResolutionStatus indicates settled
+
+    Returns None only if there's genuinely no resolution signal.
     """
     params = {"condition_ids": condition_id}
     rows = await _gamma_get("/markets", params)
@@ -874,16 +880,27 @@ async def get_market_resolution(condition_id: str) -> dict[str, Any] | None:
         return None
     m = rows[0]
     closed = bool(m.get("closed"))
-    if not closed:
-        return None
-    # outcomePrices ends up [1, 0] or [0, 1] once resolved; UMA-resolved markets carry it.
+    archived = bool(m.get("archived"))
+    uma_status = str(m.get("umaResolutionStatus") or "").lower()
+    uma_settled = uma_status in ("resolved", "settled")
+
+    # outcomePrices is the strongest signal — once UMA settles, it's set to [1,0] or [0,1]
     prices = _parse_outcome_prices(m.get("outcomePrices"))
     winner = None
     if len(prices) == 2:
-        if prices[0] == 1 and prices[1] == 0:
+        try:
+            p0, p1 = float(prices[0]), float(prices[1])
+        except (TypeError, ValueError):
+            p0, p1 = -1.0, -1.0
+        if p0 >= 0.99 and p1 <= 0.01:
             winner = "YES"
-        elif prices[0] == 0 and prices[1] == 1:
+        elif p1 >= 0.99 and p0 <= 0.01:
             winner = "NO"
+
+    resolved_via_prices = winner is not None
+    if not (closed or archived or uma_settled or resolved_via_prices):
+        return None
+
     return {
         "closed": True,
         "winner": winner,
