@@ -88,10 +88,10 @@ Run 2-3 focused web searches covering: team form, head-to-head, roster/patch new
 Return only a single fenced JSON block:
 
 ```json
-{{"true_prob_yes": 0.62, "confidence": "medium", "summary": "2-3 sentences on who is favored, why, and the biggest uncertainty.", "key_facts": ["fact", "fact"]}}
+{{"true_prob_yes": 0.62, "confidence": "medium", "summary": "ELI5 in 1-2 short sentences. Plain English a casual fan understands -- no jargon, no acronyms, just who's likely to win and why in simple words.", "key_facts": ["fact", "fact"]}}
 ```
 
-Rules: 0.02 <= true_prob_yes <= 0.98. confidence in {{"low","medium","high"}}. If you can't find recent info, use "low" and pick a value close to {yes_implied:.0f}%."""
+Rules: 0.02 <= true_prob_yes <= 0.98. confidence in {{"low","medium","high"}}. Summary MUST be ELI5 -- no esports jargon (KDA, meta, scrim, etc.), no team acronyms without expansion. If you can't find recent info, use "low" and pick a value close to {yes_implied:.0f}%."""
 
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
