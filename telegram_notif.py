@@ -303,6 +303,7 @@ async def notify_account_pnl(
     closed: list[dict],
     excluded_extreme: int = 0,
     excluded_live: int = 0,
+    excluded_both_sides: int = 0,
 ) -> None:
     """Lifetime account PnL reconstructed from data-api /trades + Gamma
     resolution. Independent of positions.json — answers 'how have I really
@@ -310,14 +311,17 @@ async def notify_account_pnl(
 
     excluded_extreme: trades filtered for entry price >=$0.95 or <=$0.05
     excluded_live: trades filtered for placement AFTER game start time
+    excluded_both_sides: trades filtered when both YES and NO bet on same market
     """
-    excl_total = excluded_extreme + excluded_live
+    excl_total = excluded_extreme + excluded_live + excluded_both_sides
     if not closed:
         body = "📊 ACCOUNT PNL\n\nNo closed positions on-chain (after filters)."
         if excl_total:
             body += (
                 f"\n\nExcluded as bot errors: {excl_total}"
-                f" (extreme price: {excluded_extreme}, live entry: {excluded_live})"
+                f" (extreme price: {excluded_extreme}, "
+                f"live entry: {excluded_live}, "
+                f"both sides: {excluded_both_sides})"
             )
         await _send(body)
         return
@@ -342,7 +346,9 @@ async def notify_account_pnl(
     if excl_total:
         lines.append(
             f"🚫 Excluded as bot errors: {excl_total} "
-            f"(extreme price: {excluded_extreme}, live entry: {excluded_live})"
+            f"(extreme price: {excluded_extreme}, "
+            f"live entry: {excluded_live}, "
+            f"both sides: {excluded_both_sides})"
         )
     lines.append("")
 

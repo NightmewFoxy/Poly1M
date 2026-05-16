@@ -96,6 +96,76 @@ def mark_details_sent(token_id: str) -> bool:
     return changed
 
 
+def mark_bot_errors(
+    game_start_times: dict[str, "datetime"] | None = None,
+    extreme_high: float = 0.95,
+    extreme_low: float = 0.05,
+) -> int:
+    """Stamp bot_error=True on positions that match known error patterns:
+      - extreme entry price (>=extreme_high or <=extreme_low)
+      - first BUY at/after the market's gameStartTime (live-game entry)
+      - both YES and NO bets recorded against the same condition_id
+
+    Persists the flag in positions.json so all future reports filter them
+    out without recomputing. Returns count of records newly flagged.
+    """
+    data = load()
+
+    # Detect condition_ids where the bot bet both sides
+    sides_by_cond: dict[str, set[str]] = {}
+    for p in data["open"] + data["resolved"]:
+        cid = p.get("condition_id")
+        side = p.get("side")
+        if cid and side:
+            sides_by_cond.setdefault(str(cid), set()).add(str(side))
+    both_sides = {cid for cid, sides in sides_by_cond.items() if len(sides) > 1}
+
+    starts = game_start_times or {}
+    newly = 0
+
+    def _check(p: dict[str, Any]) -> tuple[bool, list[str]]:
+        reasons: list[str] = []
+        price = p.get("price")
+        if isinstance(price, (int, float)) and (price >= extreme_high or price <= extreme_low):
+            reasons.append("extreme_price")
+        cid = str(p.get("condition_id") or "")
+        opened_at = p.get("opened_at")
+        if cid and opened_at and cid in starts:
+            try:
+                opened_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                opened_dt = None
+            if opened_dt is not None and opened_dt >= starts[cid]:
+                reasons.append("live_entry")
+        if cid and cid in both_sides:
+            reasons.append("both_sides")
+        return (bool(reasons), reasons)
+
+    for bucket in ("open", "resolved"):
+        for p in data[bucket]:
+            if p.get("bot_error"):
+                continue
+            is_err, reasons = _check(p)
+            if is_err:
+                p["bot_error"] = True
+                p["bot_error_reasons"] = reasons
+                newly += 1
+
+    if newly:
+        save(data)
+    return newly
+
+
+def list_open_strategy() -> list[dict[str, Any]]:
+    """Open positions excluding bot errors — what all user-facing reports use."""
+    return [p for p in load()["open"] if not p.get("bot_error")]
+
+
+def list_resolved_strategy() -> list[dict[str, Any]]:
+    """Resolved positions excluding bot errors — what all user-facing reports use."""
+    return [r for r in load()["resolved"] if not r.get("bot_error")]
+
+
 def reconcile_with_onchain(held_token_ids: set[str]) -> list[dict[str, Any]]:
     """Drop entries from `open` whose token_id is no longer held on-chain.
 

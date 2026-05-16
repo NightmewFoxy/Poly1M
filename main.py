@@ -576,9 +576,19 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         if dt is not None:
             start_times[cid] = dt
 
+    # Detect condition_ids where the user bet both YES and NO (bot error)
+    outcomes_by_cond: dict[str, set[str]] = {}
+    for d in by_token.values():
+        cid = d.get("condition_id") or ""
+        oc = (d.get("outcome") or "").upper()
+        if cid and oc:
+            outcomes_by_cond.setdefault(cid, set()).add(oc)
+    both_sides_conds = {cid for cid, outs in outcomes_by_cond.items() if len(outs) > 1}
+
     # Apply exclusion filters
     excluded_extreme = 0
     excluded_live = 0
+    excluded_both_sides = 0
     filtered: dict[str, dict[str, Any]] = {}
     for token, d in by_token.items():
         fp = d.get("first_price")
@@ -590,6 +600,9 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         gst = start_times.get(cid)
         if buy_dt is not None and gst is not None and buy_dt >= gst:
             excluded_live += 1
+            continue
+        if cid and cid in both_sides_conds:
+            excluded_both_sides += 1
             continue
         filtered[token] = d
 
@@ -637,6 +650,7 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         "closed": closed,
         "excluded_extreme": excluded_extreme,
         "excluded_live": excluded_live,
+        "excluded_both_sides": excluded_both_sides,
     }
 
 
@@ -680,15 +694,36 @@ async def main_async() -> None:
     except Exception as exc:
         log.warning("On-chain reconcile skipped: %s", exc)
 
+    # Stamp bot_error=True on records matching known error patterns so every
+    # downstream report filters them out automatically (extreme entry price,
+    # live-game entries, both-sides bets on the same condition_id).
     try:
-        await tg.notify_startup(positions.list_open())
+        all_cond_ids = [
+            p.get("condition_id")
+            for p in positions.list_open() + positions.list_resolved()
+            if p.get("condition_id")
+        ]
+        raw_starts = await get_market_game_start_times(list(set(all_cond_ids)))
+        parsed_starts: dict[str, "datetime"] = {}
+        for cid, raw in raw_starts.items():
+            dt = _parse_ts(raw)
+            if dt is not None:
+                parsed_starts[cid] = dt
+        flagged = positions.mark_bot_errors(game_start_times=parsed_starts)
+        if flagged:
+            log.info("Flagged %d positions as bot_error", flagged)
+    except Exception as exc:
+        log.warning("Bot-error flagging skipped: %s", exc)
+
+    try:
+        await tg.notify_startup(positions.list_open_strategy())
     except Exception as exc:
         log.warning("Startup Telegram notify failed: %s", exc)
 
     # One-shot per-position review: resend the TRADE EXECUTED format for any
     # open position that hasn't had its review message emitted yet. Lets the
     # user spot thin-edge trades currently held and manually exit them.
-    for p in positions.list_open():
+    for p in positions.list_open_strategy():
         if p.get("details_sent"):
             continue
         try:
@@ -698,11 +733,11 @@ async def main_async() -> None:
             log.warning("Open-position detail notify failed: %s", exc)
 
     try:
-        resolved_records = positions.list_resolved()
+        resolved_records = positions.list_resolved_strategy()
         enriched = await _enrich_with_realised_pnl(
             resolved_records, config.POLYMARKET_FUNDER_ADDRESS
         )
-        local_buys = len(resolved_records) + positions.open_count()
+        local_buys = len(resolved_records) + len(positions.list_open_strategy())
         onchain_buys = await _count_total_buys(config.POLYMARKET_FUNDER_ADDRESS)
         await tg.notify_history(enriched, local_buys=local_buys, onchain_buys=onchain_buys)
     except Exception as exc:
@@ -716,6 +751,7 @@ async def main_async() -> None:
             account_data.get("closed", []),
             excluded_extreme=account_data.get("excluded_extreme", 0),
             excluded_live=account_data.get("excluded_live", 0),
+            excluded_both_sides=account_data.get("excluded_both_sides", 0),
         )
     except Exception as exc:
         log.warning("Account PnL Telegram report failed: %s", exc)
