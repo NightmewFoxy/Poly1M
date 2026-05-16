@@ -892,6 +892,30 @@ async def get_market_resolution(condition_id: str) -> dict[str, Any] | None:
 
 
 @retry(**_HTTP_RETRY)
+async def get_token_outcome_map(condition_ids: list[str]) -> dict[str, dict[str, str]]:
+    """For each condition_id, return {"yes_token": str, "no_token": str,
+    "condition_id": ...}. Sourced from Gamma's clobTokenIds (authoritative)
+    so we don't have to trust data-api's per-trade `outcome` field, which
+    in practice can be missing or misformatted.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for i in range(0, len(condition_ids), 50):
+        batch = condition_ids[i : i + 50]
+        try:
+            rows = await _gamma_get("/markets", {"condition_ids": ",".join(batch)})
+        except Exception:
+            continue
+        for m in rows or []:
+            cid = m.get("conditionId") or m.get("condition_id")
+            if not cid:
+                continue
+            tokens = _parse_token_ids(m.get("clobTokenIds"))
+            if len(tokens) >= 2:
+                out[str(cid)] = {"yes_token": tokens[0], "no_token": tokens[1]}
+    return out
+
+
+@retry(**_HTTP_RETRY)
 async def get_market_game_start_times(condition_ids: list[str]) -> dict[str, str]:
     """Batch-fetch gameStartTime for a set of condition_ids from Gamma.
     Returns {condition_id: iso_or_unix_ts}. Missing markets just omit.

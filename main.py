@@ -33,6 +33,7 @@ from polymarket_client import (
     get_market_game_start_times,
     get_market_meta,
     get_onchain_position_tokens,
+    get_token_outcome_map,
     get_usdc_balance,
     get_user_trades,
     place_market_buy,
@@ -611,6 +612,27 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
     except Exception:
         held = set()
 
+    # Authoritative token→side map from Gamma clobTokenIds. Lets us figure
+    # out if our held token was the winning side without trusting data-api's
+    # per-trade `outcome` field (which in practice is often empty).
+    filtered_cids = list({d.get("condition_id") or "" for d in filtered.values() if d.get("condition_id")})
+    try:
+        side_map = await get_token_outcome_map(filtered_cids)
+    except Exception as exc:
+        log.warning("Token outcome map fetch failed: %s", exc)
+        side_map = {}
+
+    def _token_side(condition_id: str, token_id: str) -> str:
+        """Return 'YES' or 'NO' for this token within the market, or '' if unknown."""
+        m = side_map.get(condition_id)
+        if not m:
+            return ""
+        if str(token_id) == str(m.get("yes_token")):
+            return "YES"
+        if str(token_id) == str(m.get("no_token")):
+            return "NO"
+        return ""
+
     closed: list[dict[str, Any]] = []
     for token, d in filtered.items():
         if token in held:
@@ -618,16 +640,17 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         net_shares = d["buy_shares"] - d["sell_shares"]
         proceeds = d["sell_value"]
         exit_kind = "ui_sell" if d["sell_value"] > 0 else "unknown"
-        if net_shares > 0.01 and d["condition_id"]:
+        cid = d["condition_id"] or ""
+        side = _token_side(cid, token) or d.get("outcome", "")  # Gamma first, data-api fallback
+        if net_shares > 0.01 and cid:
             try:
-                info = await get_market_resolution(d["condition_id"])
+                info = await get_market_resolution(cid)
             except Exception:
                 info = None
             if info and info.get("closed"):
                 winner = info.get("winner")
-                outcome = d.get("outcome", "")
-                if winner and outcome:
-                    if winner == outcome:
+                if winner and side:
+                    if winner == side:
                         proceeds += net_shares * 1.0
                         exit_kind = "redeemed_win"
                     else:
@@ -638,7 +661,7 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         closed.append({
             "token_id": token,
             "title": d["title"] or "?",
-            "outcome": d["outcome"],
+            "outcome": side,
             "entry_price": d["first_price"],
             "pnl": round(pnl, 4),
             "buy_value": round(d["buy_value"], 4),
