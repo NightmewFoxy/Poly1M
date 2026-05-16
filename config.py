@@ -86,6 +86,11 @@ MIN_PRICE = float(_opt("MIN_PRICE", "0.10"))
 # fooling the EV formula -- a real soft-edge trade on Polymarket esports is in
 # the single-digit to low-double-digit cents-per-dollar range.
 MAX_EV_CENTS_PER_DOLLAR = float(_opt("MAX_EV_CENTS_PER_DOLLAR", "50"))
+# Minimum probability gap (in percentage points) between Claude's true_prob
+# estimate and the market price. Filters out trades where the "edge" is
+# inside Claude's calibration noise (~3-5pp on esports markets). Set to 0
+# to disable. Bot was opening +1pp trades that lost 3/3 in observed history.
+MIN_GAP_PP = float(_opt("MIN_GAP_PP", "3"))
 MIN_HOURS_TO_RESOLUTION = float(_opt("MIN_HOURS_TO_RESOLUTION", "2"))
 POLYMARKET_FEE = float(_opt("POLYMARKET_FEE", "0.02"))
 

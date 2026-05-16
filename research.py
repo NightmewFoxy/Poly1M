@@ -221,6 +221,11 @@ def research_and_score(market: MarketCandidate) -> TradeIdea | None:
     for side, price, token_id, p_side in options:
         if price <= 0 or price > config.MAX_PRICE:
             continue
+        # Minimum probability gap in percentage points — kills trades where
+        # the "edge" is inside Claude's calibration error.
+        gap_pp = (p_side - price) * 100
+        if gap_pp < config.MIN_GAP_PP:
+            continue
         ev_c = ev_cents_per_dollar(p_side, price)
         if ev_c <= 0:
             continue
