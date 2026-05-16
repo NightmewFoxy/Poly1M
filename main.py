@@ -32,6 +32,7 @@ from polymarket_client import (
     get_market_meta,
     get_onchain_position_tokens,
     get_usdc_balance,
+    get_user_trades,
     place_market_buy,
 )
 from research import TradeIdea, potential_profit_net, research_and_score
@@ -394,6 +395,53 @@ async def _safe_notify(where: str, exc: BaseException) -> None:
         log.warning("Telegram error notify failed: %s", inner)
 
 
+async def _enrich_with_realised_pnl(
+    records: list[dict[str, Any]], user_address: str
+) -> list[dict[str, Any]]:
+    """For records missing pnl/won (manual UI exits), compute realised PnL by
+    matching against on-chain SELL trades on the same token_id. Best-effort —
+    on any failure we return the records untouched.
+    """
+    needs_pnl = [r for r in records if r.get("pnl") is None and r.get("token_id")]
+    if not needs_pnl:
+        return records
+    try:
+        trades = await get_user_trades(user_address)
+    except Exception as exc:
+        log.warning("data-api trades fetch failed; skipping PnL enrichment: %s", exc)
+        return records
+
+    # Bucket SELL trades by token_id
+    sells_by_token: dict[str, list[dict]] = {}
+    for t in trades:
+        side = str(t.get("side") or "").upper()
+        if side != "SELL":
+            continue
+        token_id = str(t.get("asset") or t.get("tokenId") or "")
+        if not token_id:
+            continue
+        sells_by_token.setdefault(token_id, []).append(t)
+
+    enriched = list(records)
+    for i, r in enumerate(enriched):
+        if r.get("pnl") is not None:
+            continue
+        token_id = str(r.get("token_id") or "")
+        sells = sells_by_token.get(token_id, [])
+        if not sells:
+            continue
+        proceeds = 0.0
+        for t in sells:
+            try:
+                proceeds += float(t.get("price") or 0) * float(t.get("size") or 0)
+            except (TypeError, ValueError):
+                continue
+        stake = float(r.get("stake_usd") or 0)
+        pnl = proceeds - stake
+        enriched[i] = {**r, "pnl": round(pnl, 4), "won": pnl > 0, "exit_kind": "ui_sell"}
+    return enriched
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -440,7 +488,11 @@ async def main_async() -> None:
         log.warning("Startup Telegram notify failed: %s", exc)
 
     try:
-        await tg.notify_history(positions.list_resolved())
+        resolved_records = positions.list_resolved()
+        enriched = await _enrich_with_realised_pnl(
+            resolved_records, config.POLYMARKET_FUNDER_ADDRESS
+        )
+        await tg.notify_history(enriched)
     except Exception as exc:
         log.warning("History Telegram report failed: %s", exc)
 

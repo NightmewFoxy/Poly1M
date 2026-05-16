@@ -892,6 +892,23 @@ async def get_market_resolution(condition_id: str) -> dict[str, Any] | None:
 
 
 @retry(**_HTTP_RETRY)
+async def get_user_trades(user_address: str) -> list[dict[str, Any]]:
+    """All on-chain trades for this proxy address, newest first.
+
+    Each row carries at least: conditionId, asset (token_id), side ("BUY"/"SELL"),
+    price (float), size (shares), timestamp. Used to compute realised PnL for
+    positions the bot opened but the user exited via the UI.
+    """
+    url = f"{config.DATA_API_HOST}/trades"
+    params = {"user": user_address, "limit": 500}
+    async with httpx.AsyncClient(timeout=30) as ac:
+        r = await ac.get(url, params=params)
+        r.raise_for_status()
+        rows = r.json()
+    return rows or []
+
+
+@retry(**_HTTP_RETRY)
 async def get_onchain_position_tokens(user_address: str) -> set[str]:
     """Return the set of token_ids the user currently holds shares of (size > 0).
 

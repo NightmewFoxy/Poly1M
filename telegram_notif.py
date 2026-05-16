@@ -114,54 +114,71 @@ async def notify_redeem_needed(position: dict, payout_usd: float) -> None:
 
 
 async def notify_history(resolved: list[dict]) -> None:
-    """Boot-time summary of every resolved trade: profit + true-prob gap.
+    """Boot-time summary of every resolved trade.
 
-    Reconciled drops (no on-chain shares at reconcile time, no resolution data)
-    are skipped — they carry no PnL or winner so there's nothing to report.
+    Each record may have:
+      - pnl/won set: natural resolution (bot saw market close)
+      - reconciled=True with pnl/won computed by main from data-api sells
+      - reconciled=True with no PnL (couldn't determine — UI exit, no sell trade
+        matched, or redeemed at $1 we don't have visibility into)
     """
-    real = [
-        r for r in resolved
-        if not r.get("reconciled") and r.get("pnl") is not None and r.get("won") is not None
-    ]
-    if not real:
+    if not resolved:
+        await _send(
+            "📜 TRADE HISTORY\n\nNo resolved trades yet. The bot has not seen "
+            "a single position through to market resolution or sell."
+        )
         return
 
-    wins = [r for r in real if r.get("won")]
-    losses = [r for r in real if not r.get("won")]
-    total_pnl = sum(float(r.get("pnl") or 0) for r in real)
-    total_stake = sum(float(r.get("stake_usd") or 0) for r in real)
-    win_rate = len(wins) / len(real) * 100 if real else 0
-    # Expected win rate = mean of true_prob across all trades (model's average call)
-    avg_true = (
-        sum(float(r.get("true_prob") or 0) for r in real) / len(real) * 100
-        if real else 0
-    )
-    roi = (total_pnl / total_stake * 100) if total_stake > 0 else 0
+    with_pnl = [r for r in resolved if r.get("pnl") is not None]
+    without_pnl = [r for r in resolved if r.get("pnl") is None]
 
-    lines = [
-        "📜 TRADE HISTORY",
-        "",
-        "📊 Summary",
-        f"Trades: {len(real)} · Wins: {len(wins)} · Losses: {len(losses)}",
-        f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_stake:.2f} staked ({roi:+.1f}% ROI)",
-        f"Win rate: {win_rate:.0f}% (model expected ~{avg_true:.0f}%)",
-        "",
-        "📋 Per-trade (newest first)",
-    ]
+    lines = ["📜 TRADE HISTORY", ""]
 
-    # Newest first; cap to last 40 so we stay under Telegram's 4096-char limit
-    ordered = sorted(real, key=lambda r: r.get("resolved_at") or "", reverse=True)
-    shown = ordered[:40]
+    # --- Summary stats over the trades we have PnL for
+    if with_pnl:
+        wins = [r for r in with_pnl if (r.get("won") is True or float(r.get("pnl") or 0) > 0)]
+        total_pnl = sum(float(r.get("pnl") or 0) for r in with_pnl)
+        total_stake = sum(float(r.get("stake_usd") or 0) for r in with_pnl)
+        win_rate = len(wins) / len(with_pnl) * 100
+        avg_true = sum(float(r.get("true_prob") or 0) for r in with_pnl) / len(with_pnl) * 100
+        avg_gap = sum(
+            (float(r.get("true_prob") or 0) - float(r.get("price") or 0))
+            for r in with_pnl
+        ) / len(with_pnl) * 100
+        roi = (total_pnl / total_stake * 100) if total_stake > 0 else 0
+        lines += [
+            "📊 Summary (trades with PnL)",
+            f"Trades: {len(with_pnl)} · Profitable: {len(wins)} · Losing: {len(with_pnl) - len(wins)}",
+            f"Net PnL: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f} on ${total_stake:.2f} staked ({roi:+.1f}% ROI)",
+            f"Win rate: {win_rate:.0f}% (model expected ~{avg_true:.0f}%)",
+            f"Average edge per trade: +{avg_gap:.1f}pp (true_prob − price)",
+            "",
+        ]
+    if without_pnl:
+        lines.append(f"⚠️  {len(without_pnl)} trades have no PnL data (UI exits without matchable sell trade)")
+        lines.append("")
+
+    # --- Per-trade list
+    ordered = sorted(resolved, key=lambda r: r.get("resolved_at") or "", reverse=True)
+    shown = ordered[:30]
+    if shown:
+        lines.append("📋 Per-trade (newest first)")
     for r in shown:
-        icon = "✅" if r.get("won") else "❌"
-        pnl = float(r.get("pnl") or 0)
+        pnl_val = r.get("pnl")
+        if pnl_val is None:
+            icon = "❓"
+            pnl_str = "PnL ?"
+        else:
+            pnl = float(pnl_val)
+            icon = "✅" if pnl > 0 else ("❌" if pnl < 0 else "➖")
+            pnl_str = f"{'+' if pnl >= 0 else ''}${pnl:.2f}"
         q = (r.get("question") or "?")[:60]
         side = r.get("side") or "?"
         price = float(r.get("price") or 0)
         true_p = float(r.get("true_prob") or 0)
-        gap_pp = (true_p - price) * 100  # gap in percentage points
+        gap_pp = (true_p - price) * 100
         lines.append(
-            f"{icon} {'+' if pnl >= 0 else ''}${pnl:.2f}  {q}\n"
+            f"{icon} {pnl_str}  {q}\n"
             f"   {side} @ ${price:.2f} · true {true_p * 100:.0f}% (gap {gap_pp:+.1f}pp)"
         )
 
