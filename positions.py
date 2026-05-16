@@ -72,6 +72,40 @@ def open_count() -> int:
     return len(load()["open"])
 
 
+def reconcile_with_onchain(held_token_ids: set[str]) -> list[dict[str, Any]]:
+    """Drop entries from `open` whose token_id is no longer held on-chain.
+
+    Covers manual UI exits and pre-redeem-flow positions already redeemed in
+    the UI. Dropped entries are appended to `resolved` with reconciled=True so
+    we don't silently lose the record. Returns the list of dropped entries.
+    """
+    data = load()
+    still_open: list[dict] = []
+    dropped: list[dict] = []
+    for p in data["open"]:
+        token_id = str(p.get("token_id") or "")
+        if token_id and token_id in held_token_ids:
+            still_open.append(p)
+        else:
+            dropped.append({
+                **p,
+                "resolved_at": _now_iso(),
+                "reconciled": True,
+                "winner": None,
+                "won": None,
+                "pnl": None,
+                "redeem_status": "skipped",
+            })
+    if not dropped:
+        return []
+    data["open"] = still_open
+    data["resolved"].extend(dropped)
+    if len(data["resolved"]) > 200:
+        data["resolved"] = data["resolved"][-200:]
+    save(data)
+    return dropped
+
+
 def open_event_keys() -> set[str]:
     """Set of question_ids already held -- used to avoid doubling up on the same match."""
     return {p["question_id"] for p in load()["open"] if p.get("question_id")}

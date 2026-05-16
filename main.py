@@ -30,6 +30,7 @@ from polymarket_client import (
     filter_esports_tradeable,
     get_best_ask,
     get_market_meta,
+    get_onchain_position_tokens,
     get_usdc_balance,
     place_market_buy,
 )
@@ -419,6 +420,20 @@ async def main_async() -> None:
             "a volume is attached at that mount path.",
             config.POSITIONS_FILE,
         )
+
+    # Reconcile against on-chain holdings: prune entries the bot recorded but
+    # the user has since sold/redeemed via the UI. Best-effort — if data-api
+    # is down we keep the local list as-is rather than wrongly nuking it.
+    try:
+        held = await get_onchain_position_tokens(config.POLYMARKET_FUNDER_ADDRESS)
+        dropped = positions.reconcile_with_onchain(held)
+        if dropped:
+            log.info("Reconciled out %d stale open positions (no on-chain shares)", len(dropped))
+            for d in dropped:
+                log.info("  dropped: %s side=%s", (d.get("question") or "?")[:80], d.get("side"))
+            open_now = positions.open_count()
+    except Exception as exc:
+        log.warning("On-chain reconcile skipped: %s", exc)
 
     try:
         await tg.notify_startup(open_now)

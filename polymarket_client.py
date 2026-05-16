@@ -891,5 +891,28 @@ async def get_market_resolution(condition_id: str) -> dict[str, Any] | None:
     }
 
 
+@retry(**_HTTP_RETRY)
+async def get_onchain_position_tokens(user_address: str) -> set[str]:
+    """Return the set of token_ids the user currently holds shares of (size > 0).
+
+    Hits Polymarket's data-api /positions endpoint. Used at boot to reconcile
+    positions.json against on-chain reality — entries the bot recorded but the
+    user has since sold/redeemed via the UI get pruned.
+    """
+    url = f"{config.DATA_API_HOST}/positions"
+    params = {"user": user_address, "sizeThreshold": "0.0001"}
+    async with httpx.AsyncClient(timeout=30) as ac:
+        r = await ac.get(url, params=params)
+        r.raise_for_status()
+        rows = r.json()
+    held: set[str] = set()
+    for row in rows or []:
+        token_id = row.get("asset") or row.get("tokenId")
+        size = row.get("size")
+        if token_id and size is not None and float(size) > 0:
+            held.add(str(token_id))
+    return held
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -55,6 +55,7 @@ POLYMARKET_SIGNATURE_TYPE = int(_opt("POLYMARKET_SIGNATURE_TYPE", "1"))
 
 CLOB_HOST = "https://clob.polymarket.com"
 GAMMA_HOST = "https://gamma-api.polymarket.com"
+DATA_API_HOST = "https://data-api.polymarket.com"
 POLYGON_CHAIN_ID = 137
 
 # --- Anthropic ---
