@@ -102,5 +102,23 @@ async def notify_error(where: str, err: str) -> None:
     await _send(text)
 
 
-async def notify_startup(open_positions: int) -> None:
-    await _send(f"Bot started. Open positions: {open_positions}.")
+async def notify_startup(open_positions: list[dict] | int) -> None:
+    """Accepts either the list of open position dicts (preferred — emits names
+    and URLs so you can tell which market is held) or a plain count for
+    backwards compatibility."""
+    if isinstance(open_positions, int):
+        await _send(f"Bot started. Open positions: {open_positions}.")
+        return
+    count = len(open_positions)
+    lines = [f"Bot started. Open positions: {count}."]
+    for p in open_positions:
+        slug = p.get("slug") or ""
+        url = f"https://polymarket.com/event/{slug}" if slug else ""
+        q = (p.get("question") or "?")[:120]
+        side = p.get("side") or "?"
+        shares = p.get("shares") or 0
+        line = f"- {q} | {side} ({shares:.2f} shares)"
+        if url:
+            line += f"\n  {url}"
+        lines.append(line)
+    await _send("\n".join(lines))

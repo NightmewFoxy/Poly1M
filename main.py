@@ -431,12 +431,11 @@ async def main_async() -> None:
             log.info("Reconciled out %d stale open positions (no on-chain shares)", len(dropped))
             for d in dropped:
                 log.info("  dropped: %s side=%s", (d.get("question") or "?")[:80], d.get("side"))
-            open_now = positions.open_count()
     except Exception as exc:
         log.warning("On-chain reconcile skipped: %s", exc)
 
     try:
-        await tg.notify_startup(open_now)
+        await tg.notify_startup(positions.list_open())
     except Exception as exc:
         log.warning("Startup Telegram notify failed: %s", exc)
 

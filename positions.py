@@ -72,6 +72,10 @@ def open_count() -> int:
     return len(load()["open"])
 
 
+def list_open() -> list[dict[str, Any]]:
+    return list(load()["open"])
+
+
 def reconcile_with_onchain(held_token_ids: set[str]) -> list[dict[str, Any]]:
     """Drop entries from `open` whose token_id is no longer held on-chain.
 
