@@ -43,9 +43,12 @@ async def notify_trade(idea, fill: dict, potential_profit: float) -> None:
     side = idea.side
     implied_pct = idea.price * 100
     true_pct = idea.true_prob_side * 100
+    slug = getattr(idea.market, "slug", "") or ""
+    url = f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com/portfolio"
     msg = (
         "TRADE EXECUTED\n"
         f"Market: {idea.market.question}\n"
+        f"Link: {url}\n"
         f"My position: {side} at {fill['limit_price'] * 100:.1f} cents\n"
         f"True probability estimate: {true_pct:.0f}%\n"
         f"Market implied probability: {implied_pct:.0f}%\n"
