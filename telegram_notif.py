@@ -304,6 +304,10 @@ async def notify_account_pnl(
     excluded_extreme: int = 0,
     excluded_live: int = 0,
     excluded_both_sides: int = 0,
+    debug_sources: dict | None = None,
+    debug_pm_rows: int = 0,
+    debug_pm_with_pnl: int = 0,
+    debug_activity_events: int = 0,
 ) -> None:
     """Lifetime account PnL reconstructed from data-api /trades + Gamma
     resolution. Independent of positions.json — answers 'how have I really
@@ -374,6 +378,16 @@ async def notify_account_pnl(
             ep = r.get("entry_price")
             ep_str = f" @ ${ep:.2f}" if isinstance(ep, (int, float)) else ""
             lines.append(f"  -${abs(pnl):.2f}  {title}{ep_str}")
+        lines.append("")
+
+    # Debug: which data source actually populated each PnL number
+    if debug_sources or debug_pm_rows or debug_activity_events:
+        lines.append("🔬 Data source diagnostics")
+        lines.append(f"  Polymarket /positions rows: {debug_pm_rows} ({debug_pm_with_pnl} with realizedPnl)")
+        lines.append(f"  /activity events: {debug_activity_events}")
+        if debug_sources:
+            for k, v in sorted(debug_sources.items(), key=lambda x: -x[1]):
+                lines.append(f"  Per-trade source '{k}': {v}")
         lines.append("")
 
     # Exit-kind breakdown — helps user understand what closed how

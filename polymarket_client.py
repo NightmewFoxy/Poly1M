@@ -954,6 +954,24 @@ async def get_market_game_start_times(condition_ids: list[str]) -> dict[str, str
 
 
 @retry(**_HTTP_RETRY)
+async def get_user_positions_full(user_address: str) -> list[dict[str, Any]]:
+    """Pull /positions with no size filter so we get CLOSED positions too
+    (those with size=0 after redeem/sell).
+
+    Each row carries Polymarket's own bookkeeping fields — realizedPnl,
+    avgPrice, cashPnl, totalBought — which we should prefer over hand-
+    reconstructed cash flow because Polymarket actually has the on-chain
+    redeem events we can't reliably see.
+    """
+    url = f"{config.DATA_API_HOST}/positions"
+    params = {"user": user_address, "sizeThreshold": "0"}
+    async with httpx.AsyncClient(timeout=30) as ac:
+        r = await ac.get(url, params=params)
+        r.raise_for_status()
+        return r.json() or []
+
+
+@retry(**_HTTP_RETRY)
 async def get_user_activity(user_address: str) -> list[dict[str, Any]]:
     """Pull the broader /activity feed (includes REDEEM/REDEMPTION events,
     which never appear in /trades). Each redeem event carries the USDC

@@ -36,6 +36,7 @@ from polymarket_client import (
     get_token_outcome_map,
     get_usdc_balance,
     get_user_activity,
+    get_user_positions_full,
     get_user_trades,
     place_market_buy,
 )
@@ -623,9 +624,42 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
         log.warning("Token outcome map fetch failed: %s", exc)
         side_map = {}
 
-    # Pull /activity to recover redemption proceeds — these never appear in
-    # /trades since they're on-chain redeemPositions calls, not CLOB trades.
-    # Without this, every redeemed position looked like a $0-proceeds loss.
+    # Primary truth source: Polymarket's own /positions with sizeThreshold=0,
+    # which returns CLOSED positions too with their realizedPnl. This is what
+    # the Polymarket UI uses — most reliable PnL data we can get.
+    pm_pnl_by_token: dict[str, dict[str, Any]] = {}
+    try:
+        positions_full = await get_user_positions_full(user_address)
+    except Exception as exc:
+        log.warning("Polymarket /positions full fetch failed: %s", exc)
+        positions_full = []
+    for p in positions_full:
+        token = str(p.get("asset") or p.get("tokenId") or "")
+        if not token:
+            continue
+        # Polymarket's field naming varies; try several
+        rpnl_raw = (
+            p.get("realizedPnl") or p.get("realized_pnl")
+            or p.get("cashPnl") or p.get("cash_pnl")
+        )
+        try:
+            rpnl = float(rpnl_raw) if rpnl_raw is not None else None
+        except (TypeError, ValueError):
+            rpnl = None
+        size_raw = p.get("size") or 0
+        try:
+            cur_size = float(size_raw)
+        except (TypeError, ValueError):
+            cur_size = 0.0
+        pm_pnl_by_token[token] = {
+            "realized_pnl": rpnl,
+            "size": cur_size,
+            "title": str(p.get("title") or p.get("eventTitle") or "")[:80],
+            "outcome": str(p.get("outcome") or "").upper(),
+        }
+
+    # Secondary: /activity for REDEEM events (fallback if Polymarket /positions
+    # didn't carry realizedPnl on a row). Best-effort.
     redemptions_by_token: dict[str, float] = {}
     redemption_shares_by_token: dict[str, float] = {}
     try:
@@ -681,23 +715,40 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
     for token, d in filtered.items():
         if token in held:
             continue
-        net_shares = d["buy_shares"] - d["sell_shares"]
-        proceeds = d["sell_value"]
-        exit_kind = "ui_sell" if d["sell_value"] > 0 else "unknown"
         cid = d["condition_id"] or ""
         side = _token_side(cid, token) or d.get("outcome", "")
-
-        # Add any redemption proceeds from /activity feed (winning redeems
-        # show up here, not in /trades).
+        net_shares = d["buy_shares"] - d["sell_shares"]
         redeem_cash = redemptions_by_token.get(token, 0.0)
-        redeem_shares = redemption_shares_by_token.get(token, 0.0)
+
+        # PRIMARY: Polymarket's own realizedPnl for this token (their UI's number).
+        pm_info = pm_pnl_by_token.get(token, {})
+        pm_realized = pm_info.get("realized_pnl")
+        pm_size = pm_info.get("size", 0.0)
+        if pm_realized is not None and pm_size <= 0.01:
+            pnl = float(pm_realized)
+            exit_kind = "redeemed_win" if pnl > 0 else ("redeemed_loss" if pnl < 0 else "flat")
+            closed.append({
+                "token_id": token,
+                "title": (pm_info.get("title") or d["title"] or "?"),
+                "outcome": side or pm_info.get("outcome", ""),
+                "entry_price": d["first_price"],
+                "pnl": round(pnl, 4),
+                "buy_value": round(d["buy_value"], 4),
+                "sell_value": round(d["sell_value"], 4),
+                "redeem_value": round(redeem_cash, 4),
+                "won": pnl > 0,
+                "exit_kind": exit_kind,
+                "source": "pm_realized",
+            })
+            continue
+
+        # FALLBACK: reconstruct from /trades + /activity + Gamma resolution.
+        proceeds = d["sell_value"]
+        exit_kind = "ui_sell" if d["sell_value"] > 0 else "unknown"
         if redeem_cash > 0:
             proceeds += redeem_cash
-            exit_kind = "redeemed_win" if redeem_cash > 0 else "redeemed_loss"
-
-        # Fallback: if we have remaining shares with no SELL or REDEEM cash,
-        # ask Gamma if the market resolved and compute payout from winner.
-        # Covers losing redeems too (where Polymarket may not emit USDC events).
+            exit_kind = "redeemed_win"
+        redeem_shares = redemption_shares_by_token.get(token, 0.0)
         remaining = net_shares - redeem_shares
         if remaining > 0.01 and redeem_cash == 0 and cid:
             try:
@@ -727,12 +778,31 @@ async def _reconstruct_account_pnl(user_address: str) -> dict[str, Any]:
             "redeem_value": round(redeem_cash, 4),
             "won": pnl > 0,
             "exit_kind": exit_kind,
+            "source": "reconstructed",
         })
+    # Debug: log how many came from each source so we can see if Polymarket's
+    # realizedPnl actually populated, or if we fell back to reconstruction.
+    by_source: dict[str, int] = {}
+    for c in closed:
+        s = c.get("source", "?")
+        by_source[s] = by_source.get(s, 0) + 1
+    log.info("Account PnL sources: %s", by_source)
+    pm_with_realized = sum(
+        1 for v in pm_pnl_by_token.values() if v.get("realized_pnl") is not None
+    )
+    log.info(
+        "Polymarket /positions returned %d rows, %d with realizedPnl; /activity returned %d events",
+        len(pm_pnl_by_token), pm_with_realized, len(activity),
+    )
     return {
         "closed": closed,
         "excluded_extreme": excluded_extreme,
         "excluded_live": excluded_live,
         "excluded_both_sides": excluded_both_sides,
+        "debug_sources": by_source,
+        "debug_pm_rows": len(pm_pnl_by_token),
+        "debug_pm_with_pnl": pm_with_realized,
+        "debug_activity_events": len(activity),
     }
 
 
@@ -834,6 +904,10 @@ async def main_async() -> None:
             excluded_extreme=account_data.get("excluded_extreme", 0),
             excluded_live=account_data.get("excluded_live", 0),
             excluded_both_sides=account_data.get("excluded_both_sides", 0),
+            debug_sources=account_data.get("debug_sources", {}),
+            debug_pm_rows=account_data.get("debug_pm_rows", 0),
+            debug_pm_with_pnl=account_data.get("debug_pm_with_pnl", 0),
+            debug_activity_events=account_data.get("debug_activity_events", 0),
         )
     except Exception as exc:
         log.warning("Account PnL Telegram report failed: %s", exc)
