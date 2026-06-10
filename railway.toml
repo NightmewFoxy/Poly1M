@@ -2,7 +2,11 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python main.py"
+# Temporarily measuring arb-opportunity flow instead of running the trading
+# bot (which is net -$134 lifetime; see HISTORY_FINDINGS.md). Runs 24h, sends
+# the report + verdict to Telegram, then exits cleanly (no restart).
+# To resume the old bot: startCommand = "python main.py"
+startCommand = "python measure_arb.py --hours 24 --notify"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 

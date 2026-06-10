@@ -48,6 +48,11 @@ CLOB = "https://clob.polymarket.com"
 # Treat an edge as actionable only above this, to leave room for slippage/gas.
 MIN_EDGE_CENTS = 0.5
 
+# Market data is NOT geoblocked (only order placement is), so connect direct.
+# trust_env=False ignores HTTPS_PROXY/OUTBOUND_PROXY left over from the
+# trading bot's env — that proxy may be dead and isn't needed for reads.
+_HTTP = httpx.Client(trust_env=False, timeout=30)
+
 
 def _ascii(s: str) -> str:
     return (s or "").encode("ascii", "replace").decode("ascii")
@@ -57,8 +62,8 @@ def fetch_pages(path: str, params: dict, pages: int, page_size: int = 100) -> li
     out: list[dict] = []
     for offset in range(0, pages * page_size, page_size):
         try:
-            r = httpx.get(f"{GAMMA}{path}", params={**params, "limit": str(page_size),
-                                                    "offset": str(offset)}, timeout=30)
+            r = _HTTP.get(f"{GAMMA}{path}", params={**params, "limit": str(page_size),
+                                                    "offset": str(offset)})
             r.raise_for_status()
             batch = r.json()
         except Exception as exc:
@@ -77,7 +82,7 @@ def get_books(token_ids: list[str]) -> dict[str, dict]:
     for i in range(0, len(token_ids), 50):
         chunk = token_ids[i:i + 50]
         try:
-            r = httpx.post(f"{CLOB}/books", json=[{"token_id": t} for t in chunk], timeout=30)
+            r = _HTTP.post(f"{CLOB}/books", json=[{"token_id": t} for t in chunk])
             if r.status_code != 200:
                 continue
             for b in r.json():
