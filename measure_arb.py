@@ -20,9 +20,9 @@ import arb_scanner
 
 LOG = Path("data/arb_log.jsonl")
 SCAN_INTERVAL = 60
-# With ~$100 of working capital you can buy at most ~this many $1 binary sets
-# per opportunity; used by --report to show capturable (not just theoretical) $.
-CAPITAL_USD = 100.0
+# Working-capital tiers for --report: an opportunity's capture is
+# min(depth, capital/set_cost) sets — depth caps what extra money can buy.
+CAPITAL_TIERS = (100.0, 1000.0, 10000.0)
 
 
 def measure() -> None:
@@ -88,21 +88,24 @@ def report() -> None:
     hours = (last_ts - first_ts) / 3600
     total = sum(e["max_profit"] for e in episodes)
 
-    def capturable(e: dict) -> float:
-        # sets you can afford with CAPITAL_USD, capped by depth
-        set_cost = e["cost"] if e["kind"] == "BINARY_MERGE" else e["cost"]
-        affordable = CAPITAL_USD / max(set_cost, 0.01)
+    def capturable(e: dict, capital: float) -> float:
+        # sets you can afford at this capital, capped by displayed depth
+        affordable = capital / max(e["cost"], 0.01)
         return min(affordable, e["depth"]) * e["edge"] / 100
 
-    cap_total = sum(capturable(e) for e in episodes)
     print(f"Window: {hours:.1f}h | scans: {scans} | episodes: {len(episodes)}")
     print(f"Theoretical extractable:   ${total:.2f}  (${total / hours * 24:.2f}/day)")
-    print(f"Capturable with ${CAPITAL_USD:.0f}:    ${cap_total:.2f}  "
-          f"(${cap_total / hours * 24:.2f}/day)")
+    for capital in CAPITAL_TIERS:
+        cap_total = sum(capturable(e, capital) for e in episodes)
+        print(f"Capturable with ${capital:>6.0f}:   ${cap_total:.2f}  "
+              f"(${cap_total / hours * 24:.2f}/day, "
+              f"{cap_total / hours * 24 / capital * 100:.2f}%/day on capital)")
     print()
+    big = CAPITAL_TIERS[-1]
     for e in sorted(episodes, key=lambda e: -e["max_profit"])[:20]:
         dur = (e["last_seen"] - e["first_seen"]) / 60
-        print(f"  {e['kind']:15} ${e['max_profit']:6.2f} (cap ${capturable(e):5.2f}) "
+        caps = " ".join(f"${capturable(e, c):.2f}" for c in CAPITAL_TIERS)
+        print(f"  {e['kind']:15} ${e['max_profit']:6.2f} (cap {caps}) "
               f"edge={e['edge']:.1f}c lasted {dur:5.1f}m  {e['title'][:50]}")
 
 
