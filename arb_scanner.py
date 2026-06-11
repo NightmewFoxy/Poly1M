@@ -48,6 +48,15 @@ CLOB = "https://clob.polymarket.com"
 # Treat an edge as actionable only above this, to leave room for slippage/gas.
 MIN_EDGE_CENTS = 0.5
 
+# CLOB rejects tiny orders; below ~5 shares a "hit" isn't placeable anyway.
+MIN_DEPTH_SETS = 5.0
+
+# Wait this long after the wide scan, then re-fetch a hit's legs in ONE
+# request. The wide scan fetches books in chunks seconds apart, so a fast
+# market can show a phantom edge (YES snapshotted before a price jump, NO
+# after). Only edges that survive this near-simultaneous re-check are real.
+CONFIRM_DELAY_S = 2.0
+
 # Market data is NOT geoblocked (only order placement is), so connect direct.
 # trust_env=False ignores HTTPS_PROXY/OUTBOUND_PROXY left over from the
 # trading bot's env — that proxy may be dead and isn't needed for reads.
@@ -110,6 +119,10 @@ def scan_binary_merge(pages: int = 6) -> list[dict]:
 
     pairs = []
     for m in markets:
+        # Paused markets (live sports around resolution) keep displaying their
+        # last book — quotes you cannot hit. They look like persistent arbs.
+        if m.get("acceptingOrders") is False:
+            continue
         try:
             toks = json.loads(m.get("clobTokenIds") or "[]")
         except Exception:
@@ -132,10 +145,13 @@ def scan_binary_merge(pages: int = 6) -> list[dict]:
         if edge_c < MIN_EDGE_CENTS:
             continue
         depth = min(ysz, nsz)
+        if depth < MIN_DEPTH_SETS:
+            continue
         hits.append({"kind": "BINARY_MERGE", "edge_cents": round(edge_c, 2),
                      "cost": round(cost, 4), "depth_sets": round(depth, 1),
                      "max_profit_usd": round(edge_c / 100 * depth, 2),
-                     "title": p["q"], "vol24": p["vol24"]})
+                     "title": p["q"], "vol24": p["vol24"],
+                     "tokens": [p["yes"], p["no"]]})
     return hits
 
 
@@ -149,7 +165,11 @@ def scan_negrisk_convert(pages: int = 3, max_events: int = 60) -> list[dict]:
 
     hits = []
     for e in neg[:max_events]:
-        mkts = [m for m in (e.get("markets") or []) if m.get("active") and not m.get("closed")]
+        # Dropping paused/inactive outcomes is safe: converting a NO subset of
+        # size k still pays k-1 cash (plus YES on the rest as a bonus).
+        mkts = [m for m in (e.get("markets") or [])
+                if m.get("active") and not m.get("closed")
+                and m.get("acceptingOrders") is not False]
         no_tokens = []
         ok = True
         for m in mkts:
@@ -174,21 +194,52 @@ def scan_negrisk_convert(pages: int = 3, max_events: int = 60) -> list[dict]:
         if edge_c < MIN_EDGE_CENTS:
             continue
         depth = min(a[1] for a in asks)
+        if depth < MIN_DEPTH_SETS:
+            continue
         hits.append({"kind": "NEGRISK_CONVERT", "edge_cents": round(edge_c, 2),
                      "cost": round(cost, 4), "n_outcomes": n,
                      "depth_sets": round(depth, 1),
                      "max_profit_usd": round(edge_c / 100 * depth, 2),
                      "title": _ascii((e.get("title") or "?")[:70]),
-                     "vol24": float(e.get("volume24hr") or 0)})
+                     "vol24": float(e.get("volume24hr") or 0),
+                     "tokens": no_tokens})
     return hits
 
 
+def confirm_hits(hits: list[dict]) -> list[dict]:
+    """Re-verify every hit on a near-simultaneous snapshot before counting it.
+
+    For each hit, wait CONFIRM_DELAY_S, then fetch ALL of its legs in a single
+    /books request and recompute edge/depth from books that share one moment
+    in time. Phantom edges from the wide scan's chunked fetches die here; the
+    survivors are returned with the fresh (usually smaller) numbers.
+    """
+    confirmed = []
+    for h in hits:
+        time.sleep(CONFIRM_DELAY_S)
+        books = get_books(h["tokens"])
+        asks = [best_ask(books.get(t)) for t in h["tokens"]]
+        if any(a[0] is None for a in asks):
+            continue
+        payout = 1.0 if h["kind"] == "BINARY_MERGE" else float(len(h["tokens"]) - 1)
+        cost = sum(a[0] for a in asks)
+        edge_c = (payout - cost) * 100
+        depth = min(a[1] for a in asks)
+        if edge_c < MIN_EDGE_CENTS or depth < MIN_DEPTH_SETS:
+            continue
+        confirmed.append({**h, "edge_cents": round(edge_c, 2),
+                          "cost": round(cost, 4), "depth_sets": round(depth, 1),
+                          "max_profit_usd": round(edge_c / 100 * depth, 2)})
+    return confirmed
+
+
 def run_once(verbose: bool = True) -> list[dict]:
-    hits = scan_binary_merge() + scan_negrisk_convert()
+    raw = scan_binary_merge() + scan_negrisk_convert()
+    hits = confirm_hits(raw)
     hits.sort(key=lambda h: -h["max_profit_usd"])
     if verbose or hits:
-        print(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} | {len(hits)} arb hits "
-              f"(edge >= {MIN_EDGE_CENTS}c) ===")
+        print(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} | {len(hits)} confirmed "
+              f"arb hits ({len(raw)} raw, edge >= {MIN_EDGE_CENTS}c) ===")
         for h in hits:
             extra = f" n={h['n_outcomes']}" if "n_outcomes" in h else ""
             print(f"[{h['kind']:15}] edge={h['edge_cents']:5.2f}c/set "
