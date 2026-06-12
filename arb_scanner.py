@@ -131,6 +131,7 @@ def scan_binary_merge(pages: int = 6) -> list[dict]:
             continue
         pairs.append({"q": _ascii((m.get("question") or "?")[:70]),
                       "yes": toks[0], "no": toks[1],
+                      "cond": m.get("conditionId"),
                       "vol24": float(m.get("volume24hr") or 0)})
 
     books = get_books([p["yes"] for p in pairs] + [p["no"] for p in pairs])
@@ -151,7 +152,8 @@ def scan_binary_merge(pages: int = 6) -> list[dict]:
                      "cost": round(cost, 4), "depth_sets": round(depth, 1),
                      "max_profit_usd": round(edge_c / 100 * depth, 2),
                      "title": p["q"], "vol24": p["vol24"],
-                     "tokens": [p["yes"], p["no"]]})
+                     "tokens": [p["yes"], p["no"]],
+                     "condition_id": p["cond"]})
     return hits
 
 
