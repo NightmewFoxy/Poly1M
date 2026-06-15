@@ -168,6 +168,19 @@ posting).
 12. **Dead requirements:** `websockets` and `web3` are in requirements.txt
     but imported nowhere. Safe to ignore (or remove).
 
+13. **Polymarket fee-walls the liquid markets — the binary-merge edge does NOT
+    survive it.** CLOB `get_market` returns `taker_base_fee`/`maker_base_fee`:
+    0 on slow politics markets, but nonzero on the high-volume sports/Fed
+    markets (observed `taker_base_fee=1000`), and that fee exceeds a ~1c merge
+    edge. The v2 "PROVEN ~$6/day" report (2026-06-15) was computed fee-free and
+    so counted fee-walled markets as profit; net of fees those are losses. The
+    stack is now fee-aware: `get_market_meta()` returns the taker fee,
+    `arb_scanner.confirm_hits()` drops any hit on a nonzero/unknown-fee market
+    (`FEE_FREE_ONLY`; env `ARB_FEE_FREE_ONLY=0` disables), the executor's
+    `try_capture` refuses fee/unknown markets (`fee_skip`/`fee_unknown`), and
+    measurement writes a fee-aware **v3** log. A 30-min fee-free probe
+    (`probe_zero_fee.py`) found zero fee-free arbs.
+
 ## Kill switches
 
 - **Arb executor:** create the file `data/STOP_ARB` → clean shutdown at the
@@ -183,8 +196,9 @@ posting).
 | `arb_executor_log.jsonl` | arb_executor | Append-only event ledger (captured / faded / too_small / unwound / naked / errors). **Absence of this file = the executor has never logged a single event.** |
 | `arb_positions.json` | arb_executor | `{"open": [...], "naked": [...]}` — held YES+NO sets awaiting resolution, and stuck one-sided legs. |
 | `STOP_ARB` | you | Kill switch (existence-checked, content ignored). |
-| `arb_log_v2.jsonl` | measure_arb | v2 confirmed-methodology measurement log (on the Railway volume). |
-| `arb_log.jsonl` | (v1, local) | CONTAMINATED v1 measurement — phantom edges. Never mix with v2. |
+| `arb_log_v3.jsonl` | measure_arb | v3 = confirmed + FEE-AWARE measurement (zero-taker-fee markets only). Current methodology, on the Railway volume. |
+| `arb_log_v2.jsonl` | measure_arb | v2 confirmed-methodology log — fee-BLIND, counts fee-walled markets as profit. Superseded by v3; never mix. |
+| `arb_log.jsonl` | (v1, local) | CONTAMINATED v1 measurement — phantom edges. Never mix with v2/v3. |
 | `positions.json` | old bot | Old bot's open/resolved positions. |
 | `research_cache.json` | old bot | 4h TTL Claude verdict cache. |
 | `bot.log` | old bot | Rotating log (5MB ×3). |

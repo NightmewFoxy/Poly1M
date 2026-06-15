@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -56,6 +57,12 @@ MIN_DEPTH_SETS = 5.0
 # market can show a phantom edge (YES snapshotted before a price jump, NO
 # after). Only edges that survive this near-simultaneous re-check are real.
 CONFIRM_DELAY_S = 2.0
+
+# Only count/return arbs on zero-taker-fee markets. Polymarket charges a taker
+# fee on the liquid sports/Fed markets that exceeds a ~1c merge edge, turning the
+# "arb" into a guaranteed loss; the fee-free markets (mostly politics) are where
+# a real merge arb can exist. Default on; ARB_FEE_FREE_ONLY=0 disables (debug).
+FEE_FREE_ONLY = os.getenv("ARB_FEE_FREE_ONLY", "1").lower() not in ("0", "false", "no")
 
 # Market data is NOT geoblocked (only order placement is), so connect direct.
 # trust_env=False ignores HTTPS_PROXY/OUTBOUND_PROXY left over from the
@@ -100,6 +107,33 @@ def get_books(token_ids: list[str]) -> dict[str, dict]:
             print(f"  books chunk failed: {exc}", file=sys.stderr)
         time.sleep(0.15)
     return out
+
+
+_fee_cache: dict[str, float | None] = {}
+
+
+def taker_fee(condition_id: str) -> float | None:
+    """CLOB taker_base_fee for a market, cached. None if unknown/lookup fails.
+
+    Uses the same credential-free REST path as the book fetches (market data
+    isn't geoblocked). A nonzero fee invalidates a thin merge arb, and an
+    unknown fee can't be trusted — callers treat both as "not fee-free".
+    """
+    if not condition_id:
+        return None
+    if condition_id in _fee_cache:
+        return _fee_cache[condition_id]
+    fee: float | None = None
+    try:
+        r = _HTTP.get(f"{CLOB}/markets/{condition_id}")
+        if r.status_code == 200:
+            raw = r.json().get("taker_base_fee")
+            fee = float(raw) if raw is not None else None
+    except Exception as exc:
+        print(f"  fee lookup {condition_id[:10]} failed: {exc}", file=sys.stderr)
+        fee = None
+    _fee_cache[condition_id] = fee
+    return fee
 
 
 def best_ask(book: dict | None) -> tuple[float | None, float]:
@@ -173,6 +207,7 @@ def scan_negrisk_convert(pages: int = 3, max_events: int = 60) -> list[dict]:
                 if m.get("active") and not m.get("closed")
                 and m.get("acceptingOrders") is not False]
         no_tokens = []
+        cond_ids = []
         ok = True
         for m in mkts:
             try:
@@ -184,6 +219,7 @@ def scan_negrisk_convert(pages: int = 3, max_events: int = 60) -> list[dict]:
                 ok = False
                 break
             no_tokens.append(toks[1])
+            cond_ids.append(m.get("conditionId"))
         n = len(no_tokens)
         if not ok or n < 3:
             continue
@@ -204,7 +240,7 @@ def scan_negrisk_convert(pages: int = 3, max_events: int = 60) -> list[dict]:
                      "max_profit_usd": round(edge_c / 100 * depth, 2),
                      "title": _ascii((e.get("title") or "?")[:70]),
                      "vol24": float(e.get("volume24hr") or 0),
-                     "tokens": no_tokens})
+                     "tokens": no_tokens, "condition_ids": cond_ids})
     return hits
 
 
@@ -229,9 +265,19 @@ def confirm_hits(hits: list[dict]) -> list[dict]:
         depth = min(a[1] for a in asks)
         if edge_c < MIN_EDGE_CENTS or depth < MIN_DEPTH_SETS:
             continue
+        fee: float | None = 0.0
+        if FEE_FREE_ONLY:
+            cids = ([h["condition_id"]] if h.get("condition_id")
+                    else list(h.get("condition_ids") or []))
+            fees = [taker_fee(c) for c in cids] if cids else [None]
+            # A nonzero fee wipes the edge; an unverifiable fee can't be trusted.
+            if any(f is None or f > 0 for f in fees):
+                continue
+            fee = max((f for f in fees if f is not None), default=0.0)
         confirmed.append({**h, "edge_cents": round(edge_c, 2),
                           "cost": round(cost, 4), "depth_sets": round(depth, 1),
-                          "max_profit_usd": round(edge_c / 100 * depth, 2)})
+                          "max_profit_usd": round(edge_c / 100 * depth, 2),
+                          "taker_fee": fee})
     return confirmed
 
 
@@ -240,8 +286,9 @@ def run_once(verbose: bool = True) -> list[dict]:
     hits = confirm_hits(raw)
     hits.sort(key=lambda h: -h["max_profit_usd"])
     if verbose or hits:
+        mode = "fee-free " if FEE_FREE_ONLY else ""
         print(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} | {len(hits)} confirmed "
-              f"arb hits ({len(raw)} raw, edge >= {MIN_EDGE_CENTS}c) ===")
+              f"{mode}arb hits ({len(raw)} raw, edge >= {MIN_EDGE_CENTS}c) ===")
         for h in hits:
             extra = f" n={h['n_outcomes']}" if "n_outcomes" in h else ""
             print(f"[{h['kind']:15}] edge={h['edge_cents']:5.2f}c/set "

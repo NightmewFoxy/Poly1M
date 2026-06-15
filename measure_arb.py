@@ -30,9 +30,11 @@ import arb_scanner
 load_dotenv()
 
 DATA_DIR = Path(os.getenv("DATA_DIR") or "./data")
-# v2 = confirmed methodology (per-hit simultaneous re-check, acceptingOrders
-# filter, min depth). v1 data is contaminated by phantom edges — never mix.
-LOG = DATA_DIR / "arb_log_v2.jsonl"
+# v3 = fee-aware methodology: v2's per-hit simultaneous re-check + acceptingOrders
+# filter + min depth, AND only zero-taker-fee markets counted (Polymarket fee-walls
+# the liquid sports/Fed markets, and that fee exceeds a ~1c edge). v2 mixed those
+# fee-bearing markets in; v1 had phantom edges — never mix the three logs.
+LOG = DATA_DIR / "arb_log_v3.jsonl"
 SCAN_INTERVAL = 60
 # Working-capital tiers for reporting: an opportunity's capture is
 # min(depth, capital/set_cost) sets — depth caps what extra money can buy.
@@ -166,7 +168,7 @@ def build_report() -> str:
     raw, conf = s.get("raw_total", 0), s.get("conf_total", 0)
     survive = f"{conf / raw * 100:.0f}%" if raw else "n/a"
     lines = [
-        "ARB FLOW REPORT v2 (confirmed-edge methodology)",
+        "ARB FLOW REPORT v3 (confirmed-edge, fee-aware methodology)",
         f"Window: {h:.1f}h | scans: {s['scans']} | opportunities: {len(s['episodes'])}"
         f" ({len(s['persistent'])} persistent, consecutive scans)",
         f"Re-check survival: {raw} raw -> {conf} confirmed ({survive}) — the gap "
@@ -180,12 +182,11 @@ def build_report() -> str:
         lines.append(f"  ${c:,.0f} capital: ${all_d:.2f}/day | ${per_d:.2f}/day")
     per100 = s["tiers_persistent"][100.0] / h * 24
     if per100 >= VERDICT_GOOD_USD_DAY:
-        verdict = (f"VERDICT: PROVEN - ~${per100:.2f}/day persistent on $100, and "
-                   f"these edges survived a simultaneous re-check, so they were "
-                   f"really fillable. BUILD THE EXECUTOR AND RUN IT NOW. "
-                   f"(It must trade from the home PC - cloud IPs are geoblocked. "
-                   f"No profit happens until the executor exists; this was only "
-                   f"the measurement.)")
+        verdict = (f"VERDICT: PROVEN - ~${per100:.2f}/day persistent on $100, "
+                   f"fee-free and survived a simultaneous re-check, so really "
+                   f"fillable. The fee-aware executor (arb_executor.py) can "
+                   f"capture it from the home PC (cloud IPs are geoblocked for "
+                   f"orders). Start with a bounded $3 --once smoke test, then scale.")
     elif per100 >= VERDICT_MARGINAL_USD_DAY:
         verdict = (f"VERDICT: MARGINAL (~${per100:.2f}/day persistent on $100). "
                    f"Real but thin. Worth it only if you enjoy the build; "
@@ -203,9 +204,12 @@ def build_report() -> str:
     lines += ["", "Notes: every hit re-verified ~2s later on a single "
               "simultaneous book fetch; paused markets (acceptingOrders=false) "
               "and sub-5-share depths excluded; 'persistent' = survived in "
-              "consecutive 60s scans. Still assumes 100% fill at displayed "
-              "depth and zero trading fees - the executor must read each "
-              "market's fee rate before trusting an edge."]
+              "consecutive 60s scans. FEE-AWARE: only zero-taker-fee markets "
+              "counted (Polymarket's fee-walled sports/Fed markets excluded, "
+              "since their fee exceeds the edge). Still assumes 100% fill at "
+              "displayed depth; real fills face legging risk. Only BINARY_MERGE "
+              "is auto-tradable by the current executor; NEGRISK_CONVERT is "
+              "counted but not yet auto-traded."]
     return "\n".join(lines)
 
 
@@ -224,11 +228,12 @@ def main() -> None:
 
     if args.notify:
         send_telegram(
-            f"Arb-flow measurement v2 started ({args.hours or 'unbounded'}h, "
-            f"scan every {SCAN_INTERVAL}s). v2 re-checks every hit on a "
-            f"simultaneous book snapshot and skips paused markets, so this "
-            f"number is trustworthy where v1's $30.88/day was not. Report + "
-            f"verdict will arrive here when it finishes."
+            f"Arb-flow measurement v3 (fee-aware) started ({args.hours or 'unbounded'}h, "
+            f"scan every {SCAN_INTERVAL}s). Re-checks every hit on a simultaneous "
+            f"book snapshot, skips paused markets, AND counts only zero-taker-fee "
+            f"markets - so it measures arb flow that survives Polymarket's fees "
+            f"(v2 counted fee-walled markets as profit). Report + verdict arrive "
+            f"here when it finishes."
         )
     measure(hours=args.hours or None)
     report = build_report()

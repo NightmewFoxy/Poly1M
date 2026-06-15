@@ -184,6 +184,18 @@ async def try_capture(hit: dict, st: dict) -> None:
     if meta and not meta.get("accepting_orders", True):
         log_event({"ev": "paused", "title": hit["title"]})
         return
+    # Fee guard. The edge is computed fee-free (1 - yes_ask - no_ask); a market
+    # with any taker fee turns a ~1c arb into a loss, and Polymarket charges one
+    # on the high-volume sports/Fed markets. The arb's whole premise is
+    # certainty, so refuse to trade unless the CLOB explicitly reports a zero
+    # taker fee — an unknown fee (meta lookup failed) is disqualifying too.
+    fee_bps = meta.get("taker_base_fee")
+    if fee_bps is None:
+        log_event({"ev": "fee_unknown", "title": hit["title"]})
+        return
+    if fee_bps > 0:
+        log_event({"ev": "fee_skip", "title": hit["title"], "fee_bps": fee_bps})
+        return
     neg_risk = bool(meta.get("neg_risk", False))
     tick = float(meta.get("tick_size", 0.01))
 

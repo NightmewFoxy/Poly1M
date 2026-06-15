@@ -695,11 +695,20 @@ async def get_market_meta(condition_id: str) -> dict[str, Any] | None:
             await asyncio.sleep(0.3 * (attempt + 1))
     if not isinstance(info, dict):
         return None
+    # taker_base_fee/maker_base_fee are the CLOB's canonical per-market fee
+    # (kept as the raw API value; left None if the field is absent so callers
+    # can refuse to trade rather than assume zero). Polymarket charges a taker
+    # fee on sports/Fed markets that dwarfs a 1c arb edge; the arb executor
+    # MUST net it out or skip the market — see arb_executor.try_capture.
+    tbf = info.get("taker_base_fee")
+    mbf = info.get("maker_base_fee")
     return {
         "neg_risk": bool(info.get("neg_risk", False)),
         "tick_size": float(info.get("minimum_tick_size") or 0.01),
         "enable_order_book": bool(info.get("enable_order_book", True)),
         "accepting_orders": bool(info.get("accepting_orders", True)),
+        "taker_base_fee": float(tbf) if tbf is not None else None,
+        "maker_base_fee": float(mbf) if mbf is not None else None,
     }
 
 
