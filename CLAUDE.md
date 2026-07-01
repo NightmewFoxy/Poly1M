@@ -34,6 +34,16 @@ arb_executor.py       LIVE trader for binary-merge arbs. Home PC only.
                       polymarket_client. Kill switch: data/STOP_ARB file.
 measure_arb.py        24h opportunity-flow logger + $/day report + verdict
                       via Telegram. This is what Railway currently runs.
+lp_quoter.py          Maker bot for LIQUIDITY REWARDS (the post-fee-wall
+                      strategy, validated 2026-07-02 — see memory
+                      lp_rewards_path.md): quotes both sides (two BUYS) of
+                      calm long-dated reward markets at mid+/-1c. DRY RUN by
+                      default; LP_LIVE=1 + home IP + funded account to trade.
+                      Kill: data/STOP_LP. Cancel-all on start/stop/crash.
+                      Verifies its own reward eligibility via CLOB
+                      are_orders_scoring. Review the auto-picked basket and
+                      pin with LP_MARKETS before going live (Gamma endDates
+                      lie, gotcha #9, so near-resolution sports can slip in).
 start_arb.cmd         Double-click launcher for the executor (own window).
 start_measure.cmd     Double-click launcher for the measurer.
 
@@ -186,6 +196,9 @@ posting).
 - **Arb executor:** create the file `data/STOP_ARB` → clean shutdown at the
   next 45s cycle, with a Telegram confirmation. (Deleting the file re-arms;
   the executor must be relaunched manually.)
+- **LP quoter:** create `data/STOP_LP` → cancel-all + clean exit at the next
+  60s cycle. It also cancel-alls on startup, shutdown and any crash — a
+  resting quote surviving a dead bot is its worst failure mode.
 - **Old bot:** `TRADING_ENABLED=false` env → research-only dry run. The arb
   executor deliberately IGNORES this flag; STOP_ARB is its only switch.
 
@@ -197,6 +210,8 @@ posting).
 | `arb_positions.json` | arb_executor | `{"open": [...], "naked": [...]}` — held YES+NO sets awaiting resolution, and stuck one-sided legs. |
 | `STOP_ARB` | you | Kill switch (existence-checked, content ignored). |
 | `arb_log_v3.jsonl` | measure_arb | v3 = confirmed + FEE-AWARE measurement (zero-taker-fee markets only). Current methodology, on the Railway volume. |
+| `lp_quoter_log.jsonl` | lp_quoter | Append-only event ledger (cycles / fills / vol_pulls / cancel_alls / scoring checks / crashes). |
+| `STOP_LP` | you | LP quoter kill switch (existence-checked, content ignored). |
 | `arb_log_v2.jsonl` | measure_arb | v2 confirmed-methodology log — fee-BLIND, counts fee-walled markets as profit. Superseded by v3; never mix. |
 | `arb_log.jsonl` | (v1, local) | CONTAMINATED v1 measurement — phantom edges. Never mix with v2/v3. |
 | `positions.json` | old bot | Old bot's open/resolved positions. |
