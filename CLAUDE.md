@@ -117,6 +117,12 @@ posting).
    provider as a fix — they're all blocked. The `OUTBOUND_PROXY` value in the
    local `.env` is a **stale IPRoyal residential proxy** from the old Railway
    trading era; treat it as dead.
+   **The home PC runs Cloudflare WARP**, which routes egress through a
+   Cloudflare (Singapore) IP and 403s orders too (discovered 2026-07-02).
+   Fixed via split tunneling: `warp-cli tunnel host add clob.polymarket.com`
+   (already applied; survives reboots but not a WARP reset). Do NOT
+   `warp-cli disconnect` — the machine loses all connectivity. If orders 403
+   from this PC, first run `warp-cli tunnel host list` and re-add the host.
 
 2. **`POLYMARKET_FUNDER_ADDRESS` is NOT the UI's "deposit address".** The UI
    Cash→Deposit address (`0x54C8C1A0...`) is only where USDC arrives. Orders

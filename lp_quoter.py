@@ -259,7 +259,15 @@ def order_matched(order_id: str) -> float:
 def cancel_one(order_id: str) -> None:
     from py_clob_client_v2.clob_types import OrderPayload
     try:
-        pmc().clob().cancel_order(OrderPayload(orderID=order_id))
+        resp = pmc().clob().cancel_order(OrderPayload(orderID=order_id))
+        # CLOB reports per-order outcomes; "already canceled" is fine, anything
+        # else in not_canceled deserves eyes. Status reads lag a few seconds
+        # after a cancel, so never re-check via get_order immediately.
+        nc = (resp or {}).get("not_canceled") or {}
+        bad = {k: v for k, v in nc.items() if "already canceled" not in str(v)}
+        if bad:
+            _say(f"cancel_order {order_id[:12]} not canceled: {bad}")
+            log_event({"ev": "cancel_refused", "order": order_id, "resp": str(bad)[:200]})
     except Exception as exc:
         _say(f"cancel_order {order_id[:12]} failed: {exc}")
 
