@@ -256,6 +256,14 @@ def order_matched(order_id: str) -> float:
         return 0.0
 
 
+def cancel_one(order_id: str) -> None:
+    from py_clob_client_v2.clob_types import OrderPayload
+    try:
+        pmc().clob().cancel_order(OrderPayload(orderID=order_id))
+    except Exception as exc:
+        _say(f"cancel_order {order_id[:12]} failed: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -313,10 +321,7 @@ def run(once: bool = False) -> None:
                     log_event({"ev": "vol_pull", "q": b["q"], "from": b["last_mid"], "to": mid})
                     for side, o in list(b["orders"].items()):
                         if LIVE and o.get("id"):
-                            try:
-                                pmc().clob().cancel_order(o["id"])
-                            except Exception:
-                                pass
+                            cancel_one(o["id"])
                         b["orders"].pop(side, None)
                     b["cooldown"] = COOLDOWN_CYCLES
                 b["last_mid"] = mid
@@ -363,10 +368,7 @@ def run(once: bool = False) -> None:
                     if o and abs(o["px"] - px) < b["tick"] / 2 and o.get("id"):
                         continue  # still correctly placed
                     if o and LIVE and o.get("id"):
-                        try:
-                            pmc().clob().cancel_order(o["id"])
-                        except Exception:
-                            pass
+                        cancel_one(o["id"])
                     if LIVE:
                         oid = post_buy(tok, px, sh, b["neg_risk"], b["tick"])
                     else:
@@ -383,7 +385,8 @@ def run(once: bool = False) -> None:
                 if oids:
                     scoring_checked = True
                     try:
-                        sc = pmc().clob().are_orders_scoring({"orderIds": oids})
+                        from py_clob_client_v2.clob_types import OrdersScoringParams
+                        sc = pmc().clob().are_orders_scoring(OrdersScoringParams(orderIds=oids))
                         log_event({"ev": "scoring_check", "resp": sc})
                         notify(f"LP quoter scoring check: {sc}")
                     except Exception as exc:
