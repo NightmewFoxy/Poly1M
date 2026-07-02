@@ -35,7 +35,10 @@ Usage:
   LP_LIVE=1 python lp_quoter.py  # real orders (home PC, funded account)
 Rails (env): LP_USD_PER_SIDE (25), LP_MAX_MARKETS (5), LP_DELTA_CENTS (1.0),
 LP_PULL_CENTS (2.0), LP_MAX_INV_USD (2x per-side), LP_MARKETS (pin basket by
-comma-separated condition_ids, skips the screen).
+comma-separated condition_ids, skips the screen), LP_SHARES (0 = size each
+side as USD_PER_SIDE/price; >0 = quote exactly this many shares per side —
+the way to sit at rewardsMinSize on pools whose minimum exceeds the USD
+budget, e.g. the 200-share Fed markets).
 """
 from __future__ import annotations
 
@@ -69,6 +72,7 @@ COOLDOWN_CYCLES = int(os.getenv("LP_COOLDOWN_CYCLES", "5"))
 MAX_INV_USD = float(os.getenv("LP_MAX_INV_USD", str(2 * USD_PER_SIDE)))
 CYCLE_S = float(os.getenv("LP_CYCLE_S", "60"))
 MIN_POOL = float(os.getenv("LP_MIN_POOL", "50"))
+FIXED_SHARES = float(os.getenv("LP_SHARES", "0"))  # 0 = USD-based sizing
 MAX_JUMPS_14D = int(os.getenv("LP_MAX_JUMPS_14D", "8"))  # hourly moves >= 2c
 PIN_MARKETS = [c for c in os.getenv("LP_MARKETS", "").split(",") if c.strip()]
 
@@ -181,8 +185,9 @@ def select_basket() -> list[dict]:
         v = float(m.get("rewardsMaxSpread") or 3) / 100
         minsize = float(m.get("rewardsMinSize") or 0)
         # both sides must clear the reward min size at our budget
-        if USD_PER_SIDE / max(mid - DELTA, 0.01) < minsize or \
-           USD_PER_SIDE / max(1 - mid - DELTA, 0.01) < minsize:
+        yes_cap = FIXED_SHARES or USD_PER_SIDE / max(mid - DELTA, 0.01)
+        no_cap = FIXED_SHARES or USD_PER_SIDE / max(1 - mid - DELTA, 0.01)
+        if yes_cap < minsize or no_cap < minsize:
             continue
         if not PIN_MARKETS:
             j = jumps_14d(toks[0])
@@ -359,8 +364,8 @@ def run(once: bool = False) -> None:
                 # desired quotes (both are BUYS: YES bid + NO bid == YES ask)
                 yes_px = snap(mid - DELTA, b["tick"])
                 no_px = snap((1 - mid) - DELTA, b["tick"])
-                yes_sh = round(USD_PER_SIDE / max(yes_px, 0.01), 2)
-                no_sh = round(USD_PER_SIDE / max(no_px, 0.01), 2)
+                yes_sh = round(FIXED_SHARES or USD_PER_SIDE / max(yes_px, 0.01), 2)
+                no_sh = round(FIXED_SHARES or USD_PER_SIDE / max(no_px, 0.01), 2)
                 if yes_sh < b["minsize"] or no_sh < b["minsize"]:
                     continue
                 naked_usd = (b["inv_yes"] - b["inv_no"]) * mid
