@@ -11,6 +11,13 @@ builder = "NIXPACKS"
 startCommand = "python lp_quoter.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+# Singapore, NOT us-west (2026-07-03): IPRoyal stopped serving tunnels to
+# Railway US-West's egress range (CONNECT accepted, upstream never answers,
+# every session — 8h outage). A Singapore *datacenter* source (Cloudflare
+# WARP egress) was verified working against the same pinned gateway, incl.
+# tunnels to clob.polymarket.com. If orders ever time out in a storm again,
+# suspect IPRoyal blocking THIS region's egress too before blaming the pin.
+region = "asia-southeast1"
 
 # Mount a persistent volume at /data so positions.json and bot.log survive redeploys.
 # Create the volume in the Railway dashboard (Service -> Settings -> Volumes), mount path /data.
