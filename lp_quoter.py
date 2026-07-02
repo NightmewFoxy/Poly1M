@@ -26,6 +26,13 @@ Safety rails:
     quoting the growing side; only the balancing side stays.
   - after the first live post, asks the CLOB `are_orders_scoring` — direct
     confirmation the quotes are reward-eligible, no model faith required.
+  - outage watchdog (added 2026-07-03 after 8h of silent post failures on
+    Railway): 10 consecutive failed posts => Telegram alert, flatten the
+    book, then probe with exponential backoff (2->15 min cap) instead of
+    hammering the gateway once a minute — the rotation spam itself may be
+    what gets the source flagged. Re-alerts hourly, notifies on recovery.
+    LP_PROXY_ALT_HOSTS=<host,host> adds fallback proxy gateways; probes
+    cycle through them.
 
 Orders need a residential IP (403 from cloud IPs — CLAUDE.md #1): either run
 on the home PC, or run anywhere with LP_VIA_PROXY=<residential proxy url>
@@ -141,6 +148,55 @@ def _net_fail() -> None:
 def _net_ok() -> None:
     global _net_fails
     _net_fails = 0
+
+
+# --- outage watchdog + gateway failover --------------------------------------
+# 2026-07-03 incident: the Railway->IPRoyal tunnel died at 12:50 UTC and the
+# bot retried (and rotated sessions) once a minute for 8 hours without ever
+# telling the owner — post failures were stdout-only. Track consecutive post
+# failures; past DOWN_AFTER the main loop flattens the book, alerts, and backs
+# off. Session-rotation spam is itself a suspect for tripping the provider's
+# abuse flag, so backing off is part of the cure, not just politeness.
+DOWN_AFTER = int(os.getenv("LP_DOWN_AFTER", "10"))
+_post_fail_streak = 0
+_down = {"active": False, "since": 0.0, "alerted": 0.0,
+         "backoff": 120.0, "next_try": 0.0}
+
+_GATEWAYS: list[str] | None = None
+_gw_idx = 0
+
+
+def _build_gateways() -> list[str]:
+    """Primary proxy URL as deployed, plus the same URL re-pointed at each
+    LP_PROXY_ALT_HOSTS host (creds/port/session tag preserved)."""
+    import re as _re
+    base = os.environ.get("HTTPS_PROXY", "")
+    if not base:
+        return []
+    urls = [base]
+    for h in (x.strip() for x in os.getenv("LP_PROXY_ALT_HOSTS", "").split(",")):
+        if not h:
+            continue
+        alt = _re.sub(r"@[^@:/]+(:\d+/?)$", f"@{h}\\1", base)
+        if alt != base:
+            urls.append(alt)
+    return urls
+
+
+def _switch_gateway(reason: str) -> None:
+    global _GATEWAYS, _gw_idx
+    if _GATEWAYS is None:
+        _GATEWAYS = _build_gateways()
+    if len(_GATEWAYS) < 2:
+        return
+    _gw_idx = (_gw_idx + 1) % len(_GATEWAYS)
+    for k in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        if os.environ.get(k):
+            os.environ[k] = _GATEWAYS[_gw_idx]
+    host = _GATEWAYS[_gw_idx].rsplit("@", 1)[-1]
+    _say(f"proxy gateway switched to {host} ({reason})")
+    log_event({"ev": "gateway_switch", "host": host, "reason": reason})
+    _rotate_proxy_session("gateway switch")  # fresh session on the new node
 
 
 def _say(msg: str) -> None:
@@ -286,21 +342,22 @@ def pmc():
     return _pmc
 
 
-def cancel_all(reason: str) -> None:
+def cancel_all(reason: str) -> bool:
     if not LIVE:
-        return
+        return True
     for attempt in range(3):
         try:
             pmc().clob().cancel_all()
             _say(f"cancel_all ok ({reason})")
             log_event({"ev": "cancel_all", "reason": reason})
             _net_ok()
-            return
+            return True
         except Exception as exc:
             _say(f"cancel_all attempt {attempt + 1} failed: {exc}")
             _rotate_proxy_session("cancel_all failure")  # rotate NOW: cancels are safety-critical
             time.sleep(2)
     notify("LP quoter: cancel_all FAILED 3x — check open orders in the UI NOW")
+    return False
 
 
 def post_buy(token_id: str, price: float, shares: float,
@@ -312,15 +369,20 @@ def post_buy(token_id: str, price: float, shares: float,
                      size=round(shares, 2), side=BUY)
     opts = PartialCreateOrderOptions(
         neg_risk=neg_risk, tick_size=("0.001" if tick < 0.01 else "0.01"))
+    global _post_fail_streak
     try:
         signed = pmc().clob().create_order(args, options=opts)
         resp = pmc().clob().post_order(signed, OrderType.GTC)
         oid = (resp or {}).get("orderID") or (resp or {}).get("orderId")
+        _post_fail_streak = 0
         _net_ok()
         return str(oid) if oid else None
     except Exception as exc:
         _say(f"post_buy failed {token_id[:10]} @{price}: {exc}")
         log_event({"ev": "post_error", "token": token_id, "err": str(exc)[:200]})
+        _post_fail_streak += 1
+        if _post_fail_streak % 6 == 0:
+            _switch_gateway(f"{_post_fail_streak} consecutive post failures")
         _net_fail()
         return None
 
@@ -336,7 +398,9 @@ def order_matched(order_id: str) -> float:
         return 0.0
 
 
-def cancel_one(order_id: str) -> None:
+def cancel_one(order_id: str) -> bool:
+    """True = the exchange answered (order no longer needs tracking); False =
+    network failure, the order may still rest — caller must keep its id."""
     from py_clob_client_v2.clob_types import OrderPayload
     try:
         resp = pmc().clob().cancel_order(OrderPayload(orderID=order_id))
@@ -349,9 +413,11 @@ def cancel_one(order_id: str) -> None:
             _say(f"cancel_order {order_id[:12]} not canceled: {bad}")
             log_event({"ev": "cancel_refused", "order": order_id, "resp": str(bad)[:200]})
         _net_ok()
+        return True
     except Exception as exc:
         _say(f"cancel_order {order_id[:12]} failed: {exc}")
         _rotate_proxy_session("cancel_order failure")  # cancels are safety-critical
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +526,42 @@ def run(once: bool = False) -> None:
                 cancel_all("STOP_LP")
                 notify("LP quoter stopped via STOP_LP. All orders cancelled.")
                 return
+
+            # outage watchdog: sustained post failures => alert once, flatten
+            # the book, probe with exponential backoff instead of hammering
+            # the proxy every cycle. STOP_LP above stays responsive.
+            now = time.time()
+            if LIVE and _post_fail_streak >= DOWN_AFTER:
+                if not _down["active"]:
+                    _down.update(active=True, since=now, alerted=now,
+                                 backoff=120.0, next_try=0.0)
+                    log_event({"ev": "proxy_down", "streak": _post_fail_streak})
+                    notify("LP quoter DOWN: order posts failing repeatedly "
+                           "(proxy path?). Flattening book; probing with "
+                           "backoff, will re-alert hourly until recovered.")
+                    if cancel_all("proxy outage — flatten while down"):
+                        for b in basket:
+                            b["orders"] = {}
+                    # cancel_all failure already screams via Telegram; keep
+                    # tracked ids in that case so fills are still accounted.
+                if now - _down["alerted"] >= 3600:
+                    _down["alerted"] = now
+                    notify(f"LP quoter: still DOWN "
+                           f"{(now - _down['since']) / 3600:.1f}h "
+                           "(order posts failing via proxy).")
+                if now < _down["next_try"]:
+                    time.sleep(CYCLE_S)
+                    continue
+                _down["next_try"] = now + _down["backoff"]
+                _down["backoff"] = min(900.0, _down["backoff"] * 2)
+                _switch_gateway("down-state probe")
+            elif _down["active"]:
+                log_event({"ev": "proxy_recovered",
+                           "down_h": round((now - _down["since"]) / 3600, 2)})
+                notify("LP quoter RECOVERED: orders posting again after "
+                       f"{(now - _down['since']) / 3600:.1f}h down.")
+                _down.update(active=False, backoff=120.0, next_try=0.0)
+
             books = get_books([b["yes"] for b in basket])
             for b in basket:
                 book = books.get(b["yes"]) or {}
@@ -474,8 +576,8 @@ def run(once: bool = False) -> None:
                     _say(f"  pull {b['q'][:34]}: mid {b['last_mid']:.3f}->{mid:.3f}")
                     log_event({"ev": "vol_pull", "q": b["q"], "from": b["last_mid"], "to": mid})
                     for side, o in list(b["orders"].items()):
-                        if LIVE and o.get("id"):
-                            cancel_one(o["id"])
+                        if LIVE and o.get("id") and not cancel_one(o["id"]):
+                            continue  # may still rest — keep id, retry next cycle
                         b["orders"].pop(side, None)
                     b["cooldown"] = COOLDOWN_CYCLES
                 b["last_mid"] = mid
@@ -521,16 +623,29 @@ def run(once: bool = False) -> None:
                     o = b["orders"].get(side)
                     if o and abs(o["px"] - px) < b["tick"] / 2 and o.get("id"):
                         continue  # still correctly placed
-                    if o and LIVE and o.get("id"):
-                        cancel_one(o["id"])
+                    if o and LIVE and o.get("id") and not cancel_one(o["id"]):
+                        continue  # old order may still rest — keep tracking it
                     if LIVE:
                         oid = post_buy(tok, px, sh, b["neg_risk"], b["tick"])
+                        if oid is None:
+                            # old order (if any) is cancelled and the new post
+                            # failed: nothing rests on this side — say so,
+                            # rather than tracking a phantom id=None entry
+                            # (the 2026-07-03 stale-order bug).
+                            b["orders"].pop(side, None)
+                            continue
                     else:
                         oid = None
                         _say(f"  dry: {side:>3} BUY {sh:>8.2f}sh @{px:.3f}  {b['q'][:38]}")
                     b["orders"][side] = {"id": oid, "px": px, "shares": sh, "matched": 0.0}
                 for side in ("yes", "no"):
                     if side not in want and side in b["orders"]:
+                        # stop quoting a side => pull its resting bid too
+                        # (previously it was dropped from tracking but left
+                        # live on the exchange — same stale-order family).
+                        o = b["orders"][side]
+                        if LIVE and o.get("id") and not cancel_one(o["id"]):
+                            continue
                         b["orders"].pop(side, None)
 
             # one-time direct confirmation that live quotes actually score.

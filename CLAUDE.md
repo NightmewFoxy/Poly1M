@@ -48,6 +48,19 @@ lp_quoter.py          Maker bot for LIQUIDITY REWARDS (the post-fee-wall
                       LP_SHARES=N sizes both sides at exactly N shares (how
                       to sit at rewardsMinSize on 200-share pools);
                       LP_VIA_PROXY=<url> = cloud mode via residential proxy.
+                      Outage watchdog (2026-07-03, after 8h of silent post
+                      failures): 10 consecutive failed posts => Telegram
+                      alert + flatten book + exponential-backoff probing
+                      (2->15 min) instead of once-a-minute session-rotation
+                      spam (suspected of tripping IPRoyal's abuse flag);
+                      re-alerts hourly, notifies on recovery.
+                      LP_PROXY_ALT_HOSTS=<host,host> = fallback proxy
+                      gateways, probes cycle through them (Railway has
+                      geo.iproyal.com as alt to the pinned IP). Failed
+                      cancels no longer drop the order id from tracking
+                      (the 2026-07-03 stale-order bug: a live No bid sat
+                      unmanaged on the book for 8h because a failed
+                      cancel+post overwrote its id with None).
 start_lp_pilot.cmd    Double-click launcher for the $210 Fed-September
                       micro-pilot (LP_LIVE=1, LP_SHARES=200, market pinned).
 start_arb.cmd         Double-click launcher for the executor (own window).
