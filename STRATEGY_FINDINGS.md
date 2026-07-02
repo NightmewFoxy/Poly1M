@@ -106,6 +106,45 @@ risk-free for this account.** The honest portfolio answer remains: the
 owner's time compounds better in the proven notes business; the strategies
 above are side-yield at best.
 
+## 5. Scaling answer: can LP rewards reach RM200 (~US$45)/day? (goal set 2026-07-02)
+
+Method: for all 58 long-dated reward markets with pool ≥ $50/day, model
+net $/day = pool × our scoring share (competitor Q read from the live book,
+saturating as we grow) − pessimistic adverse-fill cost (assumes every ≥2c
+hourly jump in the market's own 14d history fills our full quote), then
+allocate capital greedily in $250/side steps. Script: scale_curve.py
+(session scratchpad).
+
+- **Naive optimizer (no guards):** RM200/day at ~$5.5k full-model, ~$24k at
+  a 50% haircut — but it gets there by piling up to $8k into thin books at
+  24–74% pool share, including a LIVE World Cup market that slipped a lying
+  endDate past the filter. That is precisely the trap signature of §3.
+- **Trap-guarded (≤$1k/side per market, ≤35% pool share, ≤4c/$/day adverse
+  cost, >21d to resolution):** only 20 calm markets qualify, carrying
+  $4.3k/day of total pool money. The capital curve **plateaus at ~$36/day
+  model on $13.5k deployed** ($11–18/day after the 50–70% haircut). Under
+  conservative assumptions RM200/day is NOT inside today's calm pools at any
+  capital.
+- **Strictly zero-risk RM200/day does not exist on Polymarket:** the only
+  riskless yield (hedged holding-reward sets, 3.25–4%/yr) needs ~$410k
+  parked to spit out $45/day.
+
+The honest route is a ladder gated by the micro-pilot's calibration factor
+**k = actual paid / model** (the pilot's model number is $4.49/day):
+
+1. **Stage 0 — $210 pilot** (running plan; Fed-September market): 2–3
+   midnight-UTC payouts measure k.
+2. **Stage 1 — if k ≥ 0.5:** $1–3k across 5–8 calm markets → RM25–75/day
+   while measuring k at basket scale.
+3. **Stage 2 — scale to what k implies for RM200/day:** k≈1 → ~$6–8k;
+   k≈0.5 → ~$24k and accepting relaxed guards (more markets, bigger pool
+   shares = more trap exposure); k < 0.3 → the goal is not achievable at
+   minimal risk; stop and say so.
+
+Caveats at scale: the two Fed-hike markets are correlated (cap combined
+macro exposure); model yields this high (~100%/yr) decay as competitors
+notice; pools rotate monthly — re-screen before every tranche.
+
 ## Operational discoveries (cost real debugging time — don't relearn)
 
 - **Cloudflare WARP on the home PC geoblocks orders** (egress = Singapore,
