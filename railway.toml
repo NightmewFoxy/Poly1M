@@ -2,11 +2,13 @@
 builder = "NIXPACKS"
 
 [deploy]
-# Temporarily measuring arb-opportunity flow instead of running the trading
-# bot (which is net -$134 lifetime; see HISTORY_FINDINGS.md). Runs 24h, sends
-# the report + verdict to Telegram, then exits cleanly (no restart).
-# To resume the old bot: startCommand = "python main.py"
-startCommand = "python measure_arb.py --hours 24 --notify"
+# LP rewards quoter (the RM200/day pilot -> ladder; STRATEGY_FINDINGS.md #4-5).
+# LIVE only when the Railway service vars say so: LP_LIVE=1, LP_SHARES=200,
+# LP_MARKETS=<pinned cond id>, LP_VIA_PROXY=<residential proxy url>.
+# Without those it boots as a read-only dry run - safe default.
+# Remote kill: set LP_STOP=1 and redeploy (cancel-all, then idle).
+# Arb measurement (v3) retired 2026-07-02: fee wall, zero net-positive arbs.
+startCommand = "python lp_quoter.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 

@@ -68,6 +68,14 @@ else:
     for _k in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
         os.environ.pop(_k, None)
 
+# py_clob_client_v2 sets no request timeout anywhere; through a residential
+# proxy a wedged tunnel blocks forever (observed 2026-07-02: post_order hung
+# >2.5 min while the order itself HAD reached the exchange). Bound every
+# socket op that lacks an explicit timeout — httpx clients set their own.
+import socket
+
+socket.setdefaulttimeout(20)
+
 import argparse
 import atexit
 import json
@@ -96,6 +104,43 @@ LEDGER = config.DATA_DIR / "lp_quoter_log.jsonl"
 CLOB = "https://clob.polymarket.com"
 
 _HTTP = httpx.Client(trust_env=False, timeout=30)
+
+# --- proxy session rotation (cloud mode only) -------------------------------
+# Residential gateways hand out peers of varying quality (~1 in 4 IPRoyal
+# sessions 504s, measured 2026-07-02). requests re-reads HTTPS_PROXY from the
+# env on every call, so swapping the _session-XXX tag in the env is enough to
+# move all subsequent order traffic to a fresh peer. Rotate after 2
+# consecutive order-plumbing failures.
+_net_fails = 0
+
+
+def _rotate_proxy_session(reason: str) -> None:
+    cur = os.environ.get("HTTPS_PROXY", "")
+    if "_session-" not in cur:
+        return
+    import random
+    import string
+    sid = "".join(random.choices(string.ascii_letters + string.digits, k=8))
+    import re as _re
+    new = _re.sub(r"_session-[^_@]+", f"_session-{sid}", cur)
+    for k in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        if os.environ.get(k):
+            os.environ[k] = new
+    _say(f"proxy session rotated ({reason})")
+    log_event({"ev": "proxy_rotate", "reason": reason})
+
+
+def _net_fail() -> None:
+    global _net_fails
+    _net_fails += 1
+    if _net_fails >= 2:
+        _rotate_proxy_session(f"{_net_fails} consecutive request failures")
+        _net_fails = 0
+
+
+def _net_ok() -> None:
+    global _net_fails
+    _net_fails = 0
 
 
 def _say(msg: str) -> None:
@@ -240,9 +285,11 @@ def cancel_all(reason: str) -> None:
             pmc().clob().cancel_all()
             _say(f"cancel_all ok ({reason})")
             log_event({"ev": "cancel_all", "reason": reason})
+            _net_ok()
             return
         except Exception as exc:
             _say(f"cancel_all attempt {attempt + 1} failed: {exc}")
+            _rotate_proxy_session("cancel_all failure")  # rotate NOW: cancels are safety-critical
             time.sleep(2)
     notify("LP quoter: cancel_all FAILED 3x — check open orders in the UI NOW")
 
@@ -260,10 +307,12 @@ def post_buy(token_id: str, price: float, shares: float,
         signed = pmc().clob().create_order(args, options=opts)
         resp = pmc().clob().post_order(signed, OrderType.GTC)
         oid = (resp or {}).get("orderID") or (resp or {}).get("orderId")
+        _net_ok()
         return str(oid) if oid else None
     except Exception as exc:
         _say(f"post_buy failed {token_id[:10]} @{price}: {exc}")
         log_event({"ev": "post_error", "token": token_id, "err": str(exc)[:200]})
+        _net_fail()
         return None
 
 
@@ -271,8 +320,10 @@ def order_matched(order_id: str) -> float:
     """Filled size of an order (0.0 if still resting or lookup fails)."""
     try:
         o = pmc().clob().get_order(order_id)
+        _net_ok()
         return float((o or {}).get("size_matched") or 0)
     except Exception:
+        _net_fail()
         return 0.0
 
 
@@ -288,8 +339,10 @@ def cancel_one(order_id: str) -> None:
         if bad:
             _say(f"cancel_order {order_id[:12]} not canceled: {bad}")
             log_event({"ev": "cancel_refused", "order": order_id, "resp": str(bad)[:200]})
+        _net_ok()
     except Exception as exc:
         _say(f"cancel_order {order_id[:12]} failed: {exc}")
+        _rotate_proxy_session("cancel_order failure")  # cancels are safety-critical
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +352,34 @@ def cancel_one(order_id: str) -> None:
 
 def snap(price: float, tick: float) -> float:
     return round(round(price / tick) * tick, 4)
+
+
+def report_payouts(state: dict) -> None:
+    """Once daily, after the 00:10-00:17 UTC payout window: read our own
+    wallet's REWARD activity from the public data-api and Telegram the
+    number. This IS the pilot's deliverable (k = actually-paid / model), so
+    the bot reports it itself — works the same on the home PC and Railway."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    if (now.hour, now.minute) < (0, 20) and state.get("day") is not None:
+        return
+    if state.get("day") == today:
+        return
+    state["day"] = today
+    try:
+        r = _HTTP.get("https://data-api.polymarket.com/activity",
+                      params={"user": config.POLYMARKET_FUNDER_ADDRESS,
+                              "type": "REWARD", "limit": 100})
+        rows = [a for a in r.json() if a.get("type") == "REWARD"]
+        day_of = lambda a: datetime.fromtimestamp(
+            a["timestamp"], tz=timezone.utc).strftime("%Y-%m-%d")
+        got = sum(float(a.get("usdcSize") or 0) for a in rows if day_of(a) == today)
+        total = sum(float(a.get("usdcSize") or 0) for a in rows)
+        notify(f"LP payout for {today}: ${got:.2f} (all-time rewards ${total:.2f})")
+        log_event({"ev": "payout_report", "day": today, "usd": got, "total": total})
+    except Exception as exc:
+        _say(f"payout report failed: {exc}")
 
 
 def run(once: bool = False) -> None:
@@ -336,6 +417,8 @@ def run(once: bool = False) -> None:
                f"Kill: create data/STOP_LP.")
     atexit.register(cancel_all, "atexit")
     scoring_checked = False
+    scoring_cycles = 0
+    payout_state: dict = {}
 
     try:
         while True:
@@ -418,10 +501,13 @@ def run(once: bool = False) -> None:
                     if side not in want and side in b["orders"]:
                         b["orders"].pop(side, None)
 
-            # one-time direct confirmation that live quotes actually score
+            # one-time direct confirmation that live quotes actually score.
+            # The scorer samples per-minute: a just-posted order reads false
+            # (observed 2026-07-02: false at +5s, true at +8min) — so wait a
+            # cycle after the first orders appear before asking.
             if LIVE and not scoring_checked:
                 oids = [o["id"] for b in basket for o in b["orders"].values() if o.get("id")]
-                if oids:
+                if oids and (scoring_cycles := scoring_cycles + 1) >= 2:
                     scoring_checked = True
                     try:
                         from py_clob_client_v2.clob_types import OrdersScoringParams
@@ -431,6 +517,8 @@ def run(once: bool = False) -> None:
                     except Exception as exc:
                         _say(f"scoring check failed: {exc}")
 
+            if LIVE:
+                report_payouts(payout_state)
             log_event({"ev": "cycle",
                        "quotes": sum(len(b["orders"]) for b in basket),
                        "mids": {b["q"][:30]: b["last_mid"] for b in basket}})
