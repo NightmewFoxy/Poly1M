@@ -121,11 +121,15 @@ posting).
    owner's home IP (Malaysia) works for orders. Hence the split: measurement
    on Railway, execution on the home PC. Do not suggest another cloud
    provider as a fix — they're all blocked. The `OUTBOUND_PROXY` value in the
-   local `.env` is a **stale IPRoyal residential proxy** from the old Railway
-   trading era; treat it as dead. A **fresh** static residential proxy is the
-   sanctioned way to trade PC-off from the cloud (that era worked for
-   months): `lp_quoter.py` takes `LP_VIA_PROXY=<url>` — orders route through
-   the proxy, reads/Telegram stay direct.
+   local `.env` is the IPRoyal **rotating residential** gateway from the old
+   Railway trading era — **RE-VERIFIED ALIVE 2026-07-02** (it's a GB traffic
+   balance, no expiry; pinned `country-br`, sticky 30-min sessions, Vivo
+   residential exits; a live GTC order was posted through it, went LIVE, and
+   cancelled cleanly). This is the sanctioned PC-off trading path:
+   `lp_quoter.py` takes `LP_VIA_PROXY=<that url>` — orders route through the
+   proxy, reads/Telegram stay direct. Unknown: remaining GB balance (IPRoyal
+   dashboard); the quoter uses ~100–300MB/month, and order failures Telegram
+   loudly if it runs dry.
    **The home PC runs Cloudflare WARP**, which routes egress through a
    Cloudflare (Singapore) IP and 403s orders too (discovered 2026-07-02).
    Fixed via split tunneling: `warp-cli tunnel host add clob.polymarket.com`
