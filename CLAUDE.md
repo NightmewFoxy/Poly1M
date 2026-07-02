@@ -116,11 +116,22 @@ posting).
 
 - Repo auto-deploys from GitHub `main` (https://github.com/NightmewFoxy/Poly1M).
 - `railway.toml` `startCommand` is the source of truth for what Railway runs
-  (the `Procfile` mirrors it). Currently: `python lp_quoter.py` — **the LP
-  micro-pilot runs LIVE on Railway since 2026-07-02** (PC-off achieved).
-  Service vars: `LP_LIVE=1`, `LP_SHARES=200`, `LP_MARKETS=<pinned Fed-Sep
-  cond id>`, `LP_VIA_PROXY=<IPRoyal url, host PINNED to 31.222.226.171 —
-  see gotcha #1>`. Remote kill: set `LP_STOP=1` + redeploy.
+  (the `Procfile` mirrors it). Currently: `python lp_quoter.py`, but **the
+  cloud LP pilot is IDLED (`LP_STOP=1`) since 2026-07-03** — IPRoyal began
+  refusing tunnels from hosting-ASN sources at 12:50 UTC 2026-07-02
+  (CONNECT accepted, upstream never answers, every session; 8h silent
+  outage). Moving the service to `asia-southeast1` (done, via
+  `[deploy.multiRegionConfig]` — a bare `region=` key is overridden by the
+  service's stored multiRegionConfig) did NOT help: the block is by source
+  classification, not region. The same gateway serves consumer-classified
+  sources fine (home PC via Cloudflare WARP egress, verified incl.
+  clob.polymarket.com tunnels). **Quoting therefore runs on the home PC**
+  (`start_lp_pilot.cmd`) until a datacenter-tolerant residential proxy
+  exists again. Service vars: `LP_LIVE=1`, `LP_SHARES=200`,
+  `LP_MARKETS=<pinned Fed-Sep cond id>`, `LP_VIA_PROXY=<IPRoyal url,
+  host pinned>`, `LP_PROXY_ALT_HOSTS=geo.iproyal.com`, `LP_STOP=1`.
+  To retry cloud quoting: unset `LP_STOP`, redeploy, watch for the
+  watchdog's DOWN alert (and create local `data/STOP_LP` first!).
 - The Railway CLI is installed locally and logged in (foxychua01@gmail.com,
   project linked). **Quirk:** `~/.claude/settings.json` injects a DEAD
   `RAILWAY_TOKEN` env var that overrides the CLI login — every `railway`
@@ -131,10 +142,11 @@ posting).
 - **Every push to main redeploys Railway and restarts the quoter** —
   graceful (cancel-all on shutdown, re-quote ~1 min later) but don't push
   trivia; each push briefly takes the quotes off the book.
-- The local `data/STOP_LP` file is deliberately left in place while the
-  pilot runs on Railway: an accidental local `start_lp_pilot.cmd` launch
-  would cancel-all Railway's live orders; STOP_LP makes it exit at the
-  first cycle instead of fighting.
+- The `STOP_LP`/`LP_STOP` pair prevents dual-quoting (each instance's
+  cancel_all kills the other's orders): whichever side is NOT quoting must
+  hold its kill switch. Currently Railway holds `LP_STOP=1`; the local
+  `data/STOP_LP` is deleted while the home PC is the quoting host. Flip
+  BOTH when moving the pilot.
 
 ## Critical gotchas (each one cost real debugging hours)
 
