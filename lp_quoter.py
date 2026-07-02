@@ -167,10 +167,10 @@ _gw_idx = 0
 _last_balance_alert = 0.0
 
 
-def _balance_alert() -> bool:
-    """Throttle 'not enough balance' Telegrams to one per 6h — the condition
-    persists until the owner tops up or frees held capital, and a per-cycle
-    alert would be exactly the spam the notify policy forbids."""
+def _reject_alert() -> bool:
+    """Throttle order-rejection Telegrams to one per 6h — these conditions
+    (balance shortfall, geoblock) persist until the owner acts, and a
+    per-cycle alert would be exactly the spam the notify policy forbids."""
     global _last_balance_alert
     if time.time() - _last_balance_alert >= 6 * 3600:
         _last_balance_alert = time.time()
@@ -396,13 +396,22 @@ def post_buy(token_id: str, price: float, shares: float,
         if sc is not None and 400 <= int(sc) < 500 and int(sc) != 429:
             # definitive server rejection: the network path is UP, so this
             # must NOT feed the outage watchdog (a persistent 400 would
-            # false-trigger DOWN alarms forever). Balance shortfalls are
-            # owner-actionable — alert, throttled; other 4xx just log.
-            if "not enough balance" in str(exc) and _balance_alert():
-                notify(f"LP quoter: NOT ENOUGH BALANCE to post {shares:g}sh "
-                       f"@{price} (${shares * price:.0f} needed). Top up USDC "
-                       "or free held capital; quoting continues on the sides "
-                       "that fit. This alert repeats at most every 6h.")
+            # false-trigger DOWN alarms forever). But persistent rejections
+            # are owner-actionable — alert, throttled to one per 6h.
+            if _reject_alert():
+                if "not enough balance" in str(exc):
+                    notify(f"LP quoter: NOT ENOUGH BALANCE to post "
+                           f"{shares:g}sh @{price} (${shares * price:.0f} "
+                           "needed). Top up USDC or free held capital; "
+                           "quoting continues on the sides that fit. "
+                           "Repeats at most every 6h.")
+                else:
+                    notify(f"LP quoter: orders REJECTED by the exchange "
+                           f"(HTTP {sc}): {str(exc)[:150]} — retrying, but "
+                           "this usually needs your action (403 = geoblock; "
+                           "on the home PC re-add the WARP split-tunnel: "
+                           "warp-cli tunnel host add clob.polymarket.com). "
+                           "Repeats at most every 6h.")
         else:
             _post_fail_streak += 1
             if _post_fail_streak % 6 == 0:
@@ -512,7 +521,25 @@ def report_payouts(state: dict) -> None:
         _say(f"payout report failed: {exc}")
 
 
+_LOCK_SOCK = None
+
+
 def run(once: bool = False) -> None:
+    # Single-instance lock: two quoters on one machine cancel each other's
+    # resting orders forever (nearly happened 2026-07-03 via a second
+    # launcher window). A bound localhost port is a cross-process mutex
+    # that dies with the process — no stale lockfile to clean up.
+    import socket as _socket
+    global _LOCK_SOCK
+    _LOCK_SOCK = _socket.socket()
+    try:
+        _LOCK_SOCK.bind(("127.0.0.1", int(os.getenv("LP_LOCK_PORT", "47391"))))
+    except OSError:
+        _say("another lp_quoter already runs on this machine — exiting")
+        notify("LP quoter: second instance blocked — one is already running. "
+               "(Use data/STOP_LP to stop the live one.)")
+        return
+
     # Remote kill for cloud runs (no shell to create data/STOP_LP there):
     # set LP_STOP=1 in the platform's env and redeploy/restart — the new
     # process cancels everything and idles instead of quoting. Idle rather
@@ -650,8 +677,13 @@ def run(once: bool = False) -> None:
                         naked = abs(b["inv_yes"] - b["inv_no"])
                         log_event({"ev": "fill", "q": b["q"], "side": side,
                                    "shares": got, "px": o["px"]})
+                        hint = ("  TIP: complete YES+NO sets can be merged "
+                                "back to USDC on polymarket.com (position "
+                                "-> Merge) to recycle capital."
+                                if sets > 0 else "")
                         notify(f"LP fill: {side.upper()} {got:.1f}sh @{o['px']} "
-                               f"{b['q'][:40]} | sets={sets:.0f} naked={naked:.0f}sh")
+                               f"{b['q'][:40]} | sets={sets:.0f} "
+                               f"naked={naked:.0f}sh{hint}")
 
                 # desired quotes (both are BUYS: YES bid + NO bid == YES ask)
                 yes_px = snap(mid - DELTA, b["tick"])

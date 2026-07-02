@@ -254,6 +254,23 @@ posting).
     measurement writes a fee-aware **v3** log. A 30-min fee-free probe
     (`probe_zero_fee.py`) found zero fee-free arbs.
 
+## Home-PC watchdog (installed 2026-07-03, owner-approved)
+
+Two artifacts OUTSIDE the repo keep the local pilot alive unattended:
+`C:\Users\foxyc\.claude\poly1m_lp_monitor.ps1` + scheduled task
+**"Poly1M LP watchdog"** (every 15 min, current user). If `data\STOP_LP` is
+absent and no `lp_quoter.py` process exists — or one exists but the ledger
+has been silent >10 min (hung) — it (re)starts `start_lp_pilot.cmd` and
+Telegrams the owner via the important bot (token read from
+`~/.claude/settings.json` at runtime, never stored). Restarts throttled to
+1/5min, alerts to 1/30min; actions logged to
+`%LOCALAPPDATA%\poly1m_lp_monitor.log`. **Consequence: closing the pilot
+window no longer stops the pilot — it auto-restarts within 15 min. The ONLY
+clean stop is creating `data\STOP_LP`.** The quoter itself holds a
+single-instance lock (localhost port 47391, env `LP_LOCK_PORT`), so a
+stray second launch exits with a Telegram instead of a cancel-all war.
+Retire with: `schtasks /Delete /TN "Poly1M LP watchdog" /F`.
+
 ## Kill switches
 
 - **Arb executor:** create the file `data/STOP_ARB` → clean shutdown at the
@@ -264,6 +281,8 @@ posting).
   resting quote surviving a dead bot is its worst failure mode. On cloud
   (no shell): set env `LP_STOP=1` and restart the service → cancel-all,
   then idles (doesn't exit, so restart policies can't spam cancel/notify).
+  **STOP_LP is also the watchdog's off switch** — without it the scheduled
+  task resurrects the quoter within 15 min (see Home-PC watchdog above).
 - **Old bot:** `TRADING_ENABLED=false` env → research-only dry run. The arb
   executor deliberately IGNORES this flag; STOP_ARB is its only switch.
 
