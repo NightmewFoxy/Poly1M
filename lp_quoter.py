@@ -27,12 +27,16 @@ Safety rails:
   - after the first live post, asks the CLOB `are_orders_scoring` — direct
     confirmation the quotes are reward-eligible, no model faith required.
 
-Must run from a residential IP (orders 403 from cloud IPs — CLAUDE.md #1).
+Orders need a residential IP (403 from cloud IPs — CLAUDE.md #1): either run
+on the home PC, or run anywhere with LP_VIA_PROXY=<residential proxy url>
+(the pattern the old Railway trading era used; buy a FRESH static
+residential proxy, the .env one is dead).
 
 Usage:
   python lp_quoter.py            # dry run, loop (safe anywhere)
   python lp_quoter.py --once     # one cycle, then exit
   LP_LIVE=1 python lp_quoter.py  # real orders (home PC, funded account)
+  LP_STOP=1                      # cancel-all + idle (remote kill for cloud)
 Rails (env): LP_USD_PER_SIDE (25), LP_MAX_MARKETS (5), LP_DELTA_CENTS (1.0),
 LP_PULL_CENTS (2.0), LP_MAX_INV_USD (2x per-side), LP_MARKETS (pin basket by
 comma-separated condition_ids, skips the screen), LP_SHARES (0 = size each
@@ -46,12 +50,23 @@ import os
 
 # Env fixes BEFORE importing config (same preamble as arb_executor.py, and for
 # the same reasons): NO-side bids price near $0.9x, above the old MAX_PRICE
-# cap; orders must egress direct from the home IP, not the stale proxy.
+# cap. Egress depends on where we run:
+#   - home PC (default): orders go DIRECT from the residential IP; every
+#     inherited proxy var is blanked (the .env OUTBOUND_PROXY is stale).
+#   - cloud (LP_VIA_PROXY=<url>): order traffic (py-clob-client / requests)
+#     routes through a FRESH residential proxy via config.py's OUTBOUND_PROXY
+#     export; market reads + Telegram (httpx trust_env=False) stay direct,
+#     which also means the bot can still see books and scream on Telegram
+#     even when the proxy itself is down.
 os.environ["MAX_PRICE"] = "0.999"
-os.environ["OUTBOUND_PROXY"] = ""
-os.environ["POLYMARKET_PROXY_URL"] = ""
-for _k in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
-    os.environ.pop(_k, None)
+_VIA_PROXY = os.getenv("LP_VIA_PROXY", "").strip()
+if _VIA_PROXY:
+    os.environ["OUTBOUND_PROXY"] = _VIA_PROXY
+else:
+    os.environ["OUTBOUND_PROXY"] = ""
+    os.environ["POLYMARKET_PROXY_URL"] = ""
+    for _k in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        os.environ.pop(_k, None)
 
 import argparse
 import atexit
@@ -287,6 +302,17 @@ def snap(price: float, tick: float) -> float:
 
 
 def run(once: bool = False) -> None:
+    # Remote kill for cloud runs (no shell to create data/STOP_LP there):
+    # set LP_STOP=1 in the platform's env and redeploy/restart — the new
+    # process cancels everything and idles instead of quoting. Idle rather
+    # than exit, so a restart-on-exit policy doesn't loop cancel/notify spam.
+    if os.getenv("LP_STOP", "").lower() in ("1", "true", "yes"):
+        cancel_all("LP_STOP env")
+        notify("LP quoter: LP_STOP is set — all orders cancelled, idling. "
+               "Unset LP_STOP and restart to resume.")
+        _say("LP_STOP set — idling forever (Ctrl-C to exit)")
+        while True:
+            time.sleep(3600)
     mode = "LIVE" if LIVE else "DRY RUN"
     basket = select_basket()
     if not basket:

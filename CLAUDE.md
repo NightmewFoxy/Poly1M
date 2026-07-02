@@ -39,11 +39,17 @@ lp_quoter.py          Maker bot for LIQUIDITY REWARDS (the post-fee-wall
                       lp_rewards_path.md): quotes both sides (two BUYS) of
                       calm long-dated reward markets at mid+/-1c. DRY RUN by
                       default; LP_LIVE=1 + home IP + funded account to trade.
-                      Kill: data/STOP_LP. Cancel-all on start/stop/crash.
+                      Kill: data/STOP_LP, or env LP_STOP=1 + restart (remote
+                      kill for cloud). Cancel-all on start/stop/crash.
                       Verifies its own reward eligibility via CLOB
                       are_orders_scoring. Review the auto-picked basket and
                       pin with LP_MARKETS before going live (Gamma endDates
                       lie, gotcha #9, so near-resolution sports can slip in).
+                      LP_SHARES=N sizes both sides at exactly N shares (how
+                      to sit at rewardsMinSize on 200-share pools);
+                      LP_VIA_PROXY=<url> = cloud mode via residential proxy.
+start_lp_pilot.cmd    Double-click launcher for the $210 Fed-September
+                      micro-pilot (LP_LIVE=1, LP_SHARES=200, market pinned).
 start_arb.cmd         Double-click launcher for the executor (own window).
 start_measure.cmd     Double-click launcher for the measurer.
 
@@ -116,7 +122,10 @@ posting).
    on Railway, execution on the home PC. Do not suggest another cloud
    provider as a fix — they're all blocked. The `OUTBOUND_PROXY` value in the
    local `.env` is a **stale IPRoyal residential proxy** from the old Railway
-   trading era; treat it as dead.
+   trading era; treat it as dead. A **fresh** static residential proxy is the
+   sanctioned way to trade PC-off from the cloud (that era worked for
+   months): `lp_quoter.py` takes `LP_VIA_PROXY=<url>` — orders route through
+   the proxy, reads/Telegram stay direct.
    **The home PC runs Cloudflare WARP**, which routes egress through a
    Cloudflare (Singapore) IP and 403s orders too (discovered 2026-07-02).
    Fixed via split tunneling: `warp-cli tunnel host add clob.polymarket.com`
@@ -204,7 +213,9 @@ posting).
   the executor must be relaunched manually.)
 - **LP quoter:** create `data/STOP_LP` → cancel-all + clean exit at the next
   60s cycle. It also cancel-alls on startup, shutdown and any crash — a
-  resting quote surviving a dead bot is its worst failure mode.
+  resting quote surviving a dead bot is its worst failure mode. On cloud
+  (no shell): set env `LP_STOP=1` and restart the service → cancel-all,
+  then idles (doesn't exit, so restart policies can't spam cancel/notify).
 - **Old bot:** `TRADING_ENABLED=false` env → research-only dry run. The arb
   executor deliberately IGNORES this flag; STOP_ARB is its only switch.
 
