@@ -203,9 +203,18 @@ def jumps_14d(token_id: str) -> int | None:
 
 def select_basket() -> list[dict]:
     """Screen for calm reward markets, or use the LP_MARKETS pin list."""
-    mkts = fetch_pages("/markets", {"active": "true", "closed": "false",
-                                    "archived": "false", "order": "volume24hr",
-                                    "ascending": "false"}, pages=6)
+    if PIN_MARKETS:
+        # Pinned markets are fetched directly by conditionId. Scanning the
+        # top-volume pages for them (the old way) silently lost the pin
+        # whenever its 24h-volume rank slipped below the page window —
+        # observed 2026-07-02 on Railway: booted fine at 07:56, "no markets
+        # passed the screen" at 08:17, same pin.
+        mkts = fetch_pages("/markets", {"condition_ids": PIN_MARKETS},
+                           pages=1)
+    else:
+        mkts = fetch_pages("/markets", {"active": "true", "closed": "false",
+                                        "archived": "false", "order": "volume24hr",
+                                        "ascending": "false"}, pages=6)
     picked: list[dict] = []
     for m in mkts:
         cond = m.get("conditionId") or ""
@@ -403,9 +412,25 @@ def run(once: bool = False) -> None:
             time.sleep(3600)
     mode = "LIVE" if LIVE else "DRY RUN"
     basket = select_basket()
-    if not basket:
-        _say("no markets passed the screen — nothing to quote")
-        return
+    empty_screens = 0
+    while not basket:
+        # Exiting here killed unattended cloud runs: a clean exit(0) is not
+        # restarted by Railway's ON_FAILURE policy, so one empty screen
+        # (Gamma hiccup, rank jitter) silently ended the pilot. Retry, and
+        # tell the owner once if it persists — a pinned market staying gone
+        # means it resolved/delisted and needs a repin.
+        empty_screens += 1
+        _say(f"no markets passed the screen (try {empty_screens}) — "
+             f"retrying in 5 min")
+        log_event({"ev": "empty_screen", "try": empty_screens})
+        if empty_screens == 6:
+            notify("LP quoter: no markets have passed the screen for 30 min "
+                   f"(pins: {','.join(PIN_MARKETS) or 'none'}). If a pinned "
+                   "market resolved, repin LP_MARKETS and restart.")
+        if once:
+            return
+        time.sleep(300)
+        basket = select_basket()
     _say(f"LP quoter {mode}: {len(basket)} markets, ${USD_PER_SIDE}/side, "
          f"quotes at mid+/-{DELTA * 100:.1f}c, pull>{PULL_CENTS}c")
     for b in basket:
