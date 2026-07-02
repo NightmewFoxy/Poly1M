@@ -164,6 +164,18 @@ _down = {"active": False, "since": 0.0, "alerted": 0.0,
 
 _GATEWAYS: list[str] | None = None
 _gw_idx = 0
+_last_balance_alert = 0.0
+
+
+def _balance_alert() -> bool:
+    """Throttle 'not enough balance' Telegrams to one per 6h — the condition
+    persists until the owner tops up or frees held capital, and a per-cycle
+    alert would be exactly the spam the notify policy forbids."""
+    global _last_balance_alert
+    if time.time() - _last_balance_alert >= 6 * 3600:
+        _last_balance_alert = time.time()
+        return True
+    return False
 
 
 def _build_gateways() -> list[str]:
@@ -380,10 +392,22 @@ def post_buy(token_id: str, price: float, shares: float,
     except Exception as exc:
         _say(f"post_buy failed {token_id[:10]} @{price}: {exc}")
         log_event({"ev": "post_error", "token": token_id, "err": str(exc)[:200]})
-        _post_fail_streak += 1
-        if _post_fail_streak % 6 == 0:
-            _switch_gateway(f"{_post_fail_streak} consecutive post failures")
-        _net_fail()
+        sc = getattr(exc, "status_code", None)
+        if sc is not None and 400 <= int(sc) < 500 and int(sc) != 429:
+            # definitive server rejection: the network path is UP, so this
+            # must NOT feed the outage watchdog (a persistent 400 would
+            # false-trigger DOWN alarms forever). Balance shortfalls are
+            # owner-actionable — alert, throttled; other 4xx just log.
+            if "not enough balance" in str(exc) and _balance_alert():
+                notify(f"LP quoter: NOT ENOUGH BALANCE to post {shares:g}sh "
+                       f"@{price} (${shares * price:.0f} needed). Top up USDC "
+                       "or free held capital; quoting continues on the sides "
+                       "that fit. This alert repeats at most every 6h.")
+        else:
+            _post_fail_streak += 1
+            if _post_fail_streak % 6 == 0:
+                _switch_gateway(f"{_post_fail_streak} consecutive post failures")
+            _net_fail()
         return None
 
 
@@ -427,6 +451,30 @@ def cancel_one(order_id: str) -> bool:
 
 def snap(price: float, tick: float) -> float:
     return round(round(price / tick) * tick, 4)
+
+
+def seed_inventory(basket: list[dict]) -> None:
+    """Restart-amnesia fix (2026-07-03): inv_* meant "bought this run", so a
+    restarted bot forgot it was already long 200 YES from a fill, kept
+    bidding the long side and couldn't afford the balancer. Seed from the
+    wallet's actual on-chain positions so the inventory cap sees the truth
+    and quotes only the balancing side when already exposed."""
+    try:
+        r = _HTTP.get("https://data-api.polymarket.com/positions",
+                      params={"user": config.POLYMARKET_FUNDER_ADDRESS,
+                              "limit": 500})
+        pos = {str(p.get("asset")): float(p.get("size") or 0) for p in r.json()}
+    except Exception as exc:
+        _say(f"inventory seed failed (starting flat): {exc}")
+        return
+    for b in basket:
+        b["inv_yes"] = pos.get(str(b["yes"]), 0.0)
+        b["inv_no"] = pos.get(str(b["no"]), 0.0)
+        if b["inv_yes"] or b["inv_no"]:
+            _say(f"  seeded inventory {b['inv_yes']:g}Y/{b['inv_no']:g}N"
+                 f"  {b['q'][:38]}")
+            log_event({"ev": "inventory_seed", "q": b["q"],
+                       "yes": b["inv_yes"], "no": b["inv_no"]})
 
 
 def report_payouts(state: dict) -> None:
@@ -509,6 +557,7 @@ def run(once: bool = False) -> None:
         b["cooldown"] = 0
         b["last_mid"] = None
         _say(f"  [{b['pool']:>6,.0f}$/d] {b['q']}")
+    seed_inventory(basket)
     if LIVE:
         cancel_all("startup clean slate")
         # startup is routine (Railway restarts alone would spam) — ledger only
