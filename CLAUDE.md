@@ -103,15 +103,25 @@ posting).
 
 - Repo auto-deploys from GitHub `main` (https://github.com/NightmewFoxy/Poly1M).
 - `railway.toml` `startCommand` is the source of truth for what Railway runs
-  (the `Procfile` mirrors it). Currently: `python measure_arb.py --hours 24
-  --notify` — a 24h measurement that Telegrams a report+verdict, then exits.
-  To resume the old bot, change startCommand back to `python main.py` (don't,
-  without reading HISTORY_FINDINGS.md).
+  (the `Procfile` mirrors it). Currently: `python lp_quoter.py` — **the LP
+  micro-pilot runs LIVE on Railway since 2026-07-02** (PC-off achieved).
+  Service vars: `LP_LIVE=1`, `LP_SHARES=200`, `LP_MARKETS=<pinned Fed-Sep
+  cond id>`, `LP_VIA_PROXY=<IPRoyal url, host PINNED to 31.222.226.171 —
+  see gotcha #1>`. Remote kill: set `LP_STOP=1` + redeploy.
+- The Railway CLI is installed locally and logged in (foxychua01@gmail.com,
+  project linked). **Quirk:** `~/.claude/settings.json` injects a DEAD
+  `RAILWAY_TOKEN` env var that overrides the CLI login — every `railway`
+  command must be prefixed with `$env:RAILWAY_TOKEN = $null;` (PowerShell)
+  or `unset RAILWAY_TOKEN` (bash) until that line is deleted.
 - A persistent volume is mounted at `/data` with env `DATA_DIR=/data`, so
-  `arb_log_v2.jsonl` accumulates across deploys.
-- **Every push to main redeploys Railway and restarts the 24h measurement
-  window.** The log survives (append-only volume) but the "Window: Xh" in the
-  report restarts. Don't push trivia while a measurement run is mid-window.
+  `lp_quoter_log.jsonl` (and the old arb logs) accumulate across deploys.
+- **Every push to main redeploys Railway and restarts the quoter** —
+  graceful (cancel-all on shutdown, re-quote ~1 min later) but don't push
+  trivia; each push briefly takes the quotes off the book.
+- The local `data/STOP_LP` file is deliberately left in place while the
+  pilot runs on Railway: an accidental local `start_lp_pilot.cmd` launch
+  would cancel-all Railway's live orders; STOP_LP makes it exit at the
+  first cycle instead of fighting.
 
 ## Critical gotchas (each one cost real debugging hours)
 
@@ -130,6 +140,15 @@ posting).
    proxy, reads/Telegram stay direct. Unknown: remaining GB balance (IPRoyal
    dashboard); the quoter uses ~100–300MB/month, and order failures Telegram
    loudly if it runs dry.
+   **GeoDNS gotcha (cost the 2026-07-02 Railway flip 30 min of 504s):**
+   `geo.iproyal.com` resolves per-region; the node Railway US-West gets
+   fast-504s every request from datacenter sources, while the node Malaysia
+   resolves to (31.222.226.171) accepts them fine. The Railway
+   `LP_VIA_PROXY` therefore pins the gateway HOST TO THAT IP instead of the
+   hostname. If proxied orders ever 504 again in a storm (fast ~3s
+   responses, every session rotation failing), suspect the pinned IP was
+   retired — re-resolve `geo.iproyal.com` from a residential vantage and
+   re-pin.
    **The home PC runs Cloudflare WARP**, which routes egress through a
    Cloudflare (Singapore) IP and 403s orders too (discovered 2026-07-02).
    Fixed via split tunneling: `warp-cli tunnel host add clob.polymarket.com`
