@@ -362,7 +362,8 @@ def report_payouts(state: dict) -> None:
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
-    if (now.hour, now.minute) < (0, 20) and state.get("day") is not None:
+    boot = state.get("day") is None
+    if (now.hour, now.minute) < (0, 20) and not boot:
         return
     if state.get("day") == today:
         return
@@ -376,8 +377,14 @@ def report_payouts(state: dict) -> None:
             a["timestamp"], tz=timezone.utc).strftime("%Y-%m-%d")
         got = sum(float(a.get("usdcSize") or 0) for a in rows if day_of(a) == today)
         total = sum(float(a.get("usdcSize") or 0) for a in rows)
-        notify(f"LP payout for {today}: ${got:.2f} (all-time rewards ${total:.2f})")
         log_event({"ev": "payout_report", "day": today, "usd": got, "total": total})
+        # Telegram policy: money landing is always news; a $0 day is news only
+        # at the once-daily scheduled check (that IS the pilot measurement) —
+        # never on a mere process restart.
+        if got > 0 or not boot:
+            notify(f"LP payout for {today}: ${got:.2f} (all-time rewards ${total:.2f})")
+        else:
+            _say(f"payout report {today}: $0 (boot check, not notified)")
     except Exception as exc:
         _say(f"payout report failed: {exc}")
 
@@ -413,8 +420,8 @@ def run(once: bool = False) -> None:
         _say(f"  [{b['pool']:>6,.0f}$/d] {b['q']}")
     if LIVE:
         cancel_all("startup clean slate")
-        notify(f"LP quoter LIVE: {len(basket)} markets, ${USD_PER_SIDE}/side. "
-               f"Kill: create data/STOP_LP.")
+        # startup is routine (Railway restarts alone would spam) — ledger only
+        log_event({"ev": "startup", "markets": len(basket)})
     atexit.register(cancel_all, "atexit")
     scoring_checked = False
     scoring_cycles = 0
@@ -513,7 +520,11 @@ def run(once: bool = False) -> None:
                         from py_clob_client_v2.clob_types import OrdersScoringParams
                         sc = pmc().clob().are_orders_scoring(OrdersScoringParams(orderIds=oids))
                         log_event({"ev": "scoring_check", "resp": sc})
-                        notify(f"LP quoter scoring check: {sc}")
+                        # need-to-know only: alert when quotes AREN'T earning
+                        if not all((sc or {}).values()):
+                            notify(f"LP quoter: quotes NOT scoring for rewards: {sc}")
+                        else:
+                            _say("scoring check: all quotes earning")
                     except Exception as exc:
                         _say(f"scoring check failed: {exc}")
 
