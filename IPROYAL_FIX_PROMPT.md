@@ -59,7 +59,24 @@ proving out is NOT done — reads working through the proxy proves nothing
    may clear it instantly. Test the new creds via `railway ssh` probe with
    `LP_VIA_PROXY` overridden inline: `railway ssh -- env LP_VIA_PROXY=<new>
    python probe_proxy.py` (redact creds in anything you print/commit).
-3. **IPRoyal support ticket / live chat** with the probe evidence. Ask
+3. **Route Railway's egress through Cloudflare WARP (free, empirically
+   supported).** The home PC's probe shows its direct egress is a Cloudflare
+   WARP IP (`104.28.163.100`, Cloudflare ASN 13335 — a datacenter ASN!) and
+   IPRoyal accepts tunnels from it. So IPRoyal's filter blocks specific
+   hosting classifications, not "anything non-consumer" — Cloudflare's
+   network passes. If Railway's connection to `geo.iproyal.com` arrives from
+   a WARP IP instead of Railway's ASN, it should pass too. Railway
+   containers have no TUN/NET_ADMIN, so use userspace WireGuard: `wgcf`
+   (registers a free WARP account, emits a WireGuard profile) + `wireproxy`
+   (runs that profile in userspace, exposes a local SOCKS5/HTTP proxy).
+   Then chain: quoter → local wireproxy → IPRoyal gateway → residential
+   exit. py-clob-client reads an HTTP proxy from the env, and proxy-chaining
+   (HTTP CONNECT via an upstream SOCKS) needs a tiny local relay — `pproxy`
+   (pip) can chain both hops in one process. Validate the chain with
+   `probe_proxy.py` first (point `LP_VIA_PROXY` at the local relay), then a
+   live order. Keep the WARP hop OUT of market reads/Telegram (only order
+   traffic needs it — same split `lp_quoter.py` already implements).
+4. **IPRoyal support ticket / live chat** with the probe evidence. Ask
    explicitly: "are connections from hosting/datacenter source ASNs to the
    royal-residential gateway blocked by policy, or is this an abuse flag on
    my account? Can it be exempted for my account/IPs?" Attach: timestamps
@@ -68,13 +85,14 @@ proving out is NOT done — reads working through the proxy proves nothing
    CONNECT-accepted-upstream-silent signature, and that the same creds work
    from consumer sources. The owner approves sending — show him the draft
    via the important Telegram bot if he isn't in the session.
-4. **IPRoyal static residential (ISP) product** — different gateway
+5. **IPRoyal static residential (ISP) product** — different gateway
    architecture (direct IP:port endpoints, not the geo gateway); the
    datacenter-source filter may not apply there. Small monthly cost — get
    owner approval by Telegram BEFORE buying. A single static residential IP
    is enough (the quoter needs one stable exit, rotation is unnecessary for
    quoting).
-5. **Alternative providers** (only if IPRoyal says "policy, no exemption"):
+6. **Alternative providers** (only if IPRoyal says "policy, no exemption"
+   AND the WARP chain fails):
    candidates Webshare, Decodo (ex-Smartproxy), SOAX, NetNut, PacketStream.
    Selection criteria: allows hosting-ASN clients (ask support BEFORE
    paying), per-GB pricing (quoter uses ~100–300MB/mo), sticky sessions,
@@ -122,7 +140,24 @@ failure mode (each instance's cancel_all kills the other's orders):
 
 ## STATUS LOG (append findings here, newest first)
 
+- **2026-07-03 ~05:00 UTC (Fable session, RESOLVED — for now):** In-container
+  probe from Railway asia-southeast1 passed **8/8**: egress 208.77.246.62
+  (AS400940 Railway) → tunnel via pinned 31.222.226.171 AND via
+  geo.iproyal.com (resolves to the same IP from SG) → residential exit
+  177.37.170.79 → CLOB HTTP 200 in ~2s. **The hosting-ASN block has
+  LIFTED.** Best hypothesis: a temporary abuse flag that aged out after
+  ~24h of quiet (the once-a-minute rotation spam stopped when the cloud
+  quoter went idle under LP_STOP on 2026-07-02 evening). Root cause NOT
+  confirmed by IPRoyal — if order posts start failing again with the
+  CONNECT-accepted-upstream-silent signature, the flag likely re-tripped:
+  keep retry volume low (the quoter's backoff watchdog already does) and
+  work avenues 2-4; the WARP-chain avenue (#3) remains the best fallback.
+  Cutover to Railway executed the same session (see CLAUDE.md Deployment
+  for the state you inherit). Gotchas hit: `railway ssh -- <cmd>` HANGS
+  from this machine (banner prints, command never executes — needs a pty?);
+  use a temporary probe startCommand + `railway logs` instead. `railway
+  logs` streams forever — wrap it in a timed job.
 - **2026-07-03 (Fable session, initial):** Home baseline PASS (exit
   177.37.232.200, CLOB 200/2s, geo resolves 31.222.226.171). Account healthy.
-  `probe_proxy.py` written; `railway ssh` confirmed available for in-container
-  runs. Railway-side probe: see next entry (or run it yourself if absent).
+  `probe_proxy.py` written. Chrome extension not connected for dashboard
+  recon — do it with the owner present if needed.
