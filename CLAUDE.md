@@ -258,15 +258,25 @@ posting).
 
 Two artifacts OUTSIDE the repo keep the local pilot alive unattended:
 `C:\Users\foxyc\.claude\poly1m_lp_monitor.ps1` + scheduled task
-**"Poly1M LP watchdog"** (every 15 min, current user). If `data\STOP_LP` is
-absent and no `lp_quoter.py` process exists — or one exists but the ledger
-has been silent >10 min (hung) — it (re)starts `start_lp_pilot.cmd` and
-Telegrams the owner via the important bot (token read from
-`~/.claude/settings.json` at runtime, never stored). Restarts throttled to
-1/5min, alerts to 1/30min; actions logged to
+**"Poly1M LP watchdog"** (every 5 min, current user; was 15 until
+2026-07-03). If `data\STOP_LP` is absent and no `lp_quoter.py` process
+exists — or one exists but the ledger has been silent >10 min (hung) — it
+(re)starts `start_lp_pilot.cmd` and Telegrams the owner via the important
+bot (token read from `~/.claude/settings.json` at runtime, never stored).
+Restarts throttled to 1/3min, alerts to 1/30min; actions logged to
 `%LOCALAPPDATA%\poly1m_lp_monitor.log`. **Consequence: closing the pilot
-window no longer stops the pilot — it auto-restarts within 15 min. The ONLY
-clean stop is creating `data\STOP_LP`.** The quoter itself holds a
+window no longer stops the pilot — it auto-restarts within ~5 min. The ONLY
+clean stop is creating `data\STOP_LP`.**
+**Hard-kill safety (2026-07-03):** window close / logoff / OS shutdown
+skip Python's atexit entirely — the pilot's first 26h had 10 startups and
+ZERO clean shutdowns, leaving quotes unmanaged up to 15 min (one 200sh fill
+landed while nobody was home). `lp_quoter.py` now registers a Windows
+console-ctrl handler (`_install_console_handler`) that cancel-alls inside
+the ~5s termination grace and writes a `console_kill` ledger event. Also
+set on this laptop: lid-close on AC = do nothing (battery still sleeps),
+sleep/hibernate on AC already 0. A `Stop-Process -Force`/BSOD still can't
+run cleanup — the next startup's cancel-all (≤5 min via watchdog) is the
+backstop. The quoter itself holds a
 single-instance lock (localhost port 47391, env `LP_LOCK_PORT`), so a
 stray second launch exits with a Telegram instead of a cancel-all war.
 Retire with: `schtasks /Delete /TN "Poly1M LP watchdog" /F`.
@@ -282,7 +292,7 @@ Retire with: `schtasks /Delete /TN "Poly1M LP watchdog" /F`.
   (no shell): set env `LP_STOP=1` and restart the service → cancel-all,
   then idles (doesn't exit, so restart policies can't spam cancel/notify).
   **STOP_LP is also the watchdog's off switch** — without it the scheduled
-  task resurrects the quoter within 15 min (see Home-PC watchdog above).
+  task resurrects the quoter within ~5 min (see Home-PC watchdog above).
 - **Old bot:** `TRADING_ENABLED=false` env → research-only dry run. The arb
   executor deliberately IGNORES this flag; STOP_ARB is its only switch.
 

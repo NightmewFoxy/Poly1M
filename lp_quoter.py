@@ -20,6 +20,10 @@ Safety rails:
   - kill switch: create data/STOP_LP -> cancel-all + clean exit.
   - dead-man: cancel-all on startup, shutdown, SIGINT and any crash. A
     resting order surviving a dead bot is the worst operational failure here.
+    Window close / logoff / OS shutdown hard-kill Python on Windows (no
+    atexit, no finally), so a console-ctrl handler flattens the book inside
+    the ~5s grace Windows grants (added 2026-07-03 after ~10 silent kills in
+    26h left quotes unmanaged up to 15 min each — one filled unattended).
   - volatility pull: mid moved > LP_PULL_CENTS since last cycle -> cancel the
     market's quotes and sit out LP_COOLDOWN_CYCLES.
   - inventory cap: naked (unmatched) exposure beyond LP_MAX_INV_USD stops
@@ -522,6 +526,36 @@ def report_payouts(state: dict) -> None:
 
 
 _LOCK_SOCK = None
+_CTRL_HANDLER = None  # ctypes callback — module ref or it gets GC'd
+
+
+def _install_console_handler() -> None:
+    """Windows delivers window-close / logoff / OS-shutdown as console ctrl
+    events and then terminates the process — atexit/finally never run, so
+    every closed window left resting quotes unmanaged until the NEXT
+    startup's cancel-all (ledger 2026-07-03: 10 startups, zero clean
+    shutdowns, one 200sh fill while nobody was home). Spend the ~5s grace
+    window flattening the book instead."""
+    if os.name != "nt" or not LIVE:
+        return
+    import ctypes
+
+    routine = ctypes.WINFUNCTYPE(ctypes.c_uint, ctypes.c_uint)
+
+    def _on_ctrl(ev: int) -> int:
+        # 2=CTRL_CLOSE (window X / graceful taskkill), 5=LOGOFF, 6=SHUTDOWN.
+        # 0/1 (Ctrl-C/Break) fall through to Python's KeyboardInterrupt path.
+        if ev in (2, 5, 6):
+            log_event({"ev": "console_kill", "event": int(ev)})
+            cancel_all(f"console ctrl event {ev}")
+            notify("LP quoter killed by window close/logoff/shutdown — "
+                   "orders cancelled. The watchdog restarts it unless "
+                   "data/STOP_LP exists.")
+        return False  # let default processing terminate us
+
+    global _CTRL_HANDLER
+    _CTRL_HANDLER = routine(_on_ctrl)
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(_CTRL_HANDLER, True)
 
 
 def run(once: bool = False) -> None:
@@ -590,6 +624,7 @@ def run(once: bool = False) -> None:
         # startup is routine (Railway restarts alone would spam) — ledger only
         log_event({"ev": "startup", "markets": len(basket)})
     atexit.register(cancel_all, "atexit")
+    _install_console_handler()
     scoring_checked = False
     scoring_cycles = 0
     payout_state: dict = {}
