@@ -543,13 +543,14 @@ def _install_console_handler() -> None:
     routine = ctypes.WINFUNCTYPE(ctypes.c_uint, ctypes.c_uint)
 
     def _on_ctrl(ev: int) -> int:
-        # 2=CTRL_CLOSE (window X / graceful taskkill), 5=LOGOFF, 6=SHUTDOWN.
-        # 0/1 (Ctrl-C/Break) fall through to Python's KeyboardInterrupt path.
-        if ev in (2, 5, 6):
+        # 1=CTRL_BREAK (SIGBREAK's default disposition also skips atexit!),
+        # 2=CTRL_CLOSE (window X), 5=LOGOFF, 6=SHUTDOWN. 0 (Ctrl-C) falls
+        # through to Python's KeyboardInterrupt -> finally -> cancel_all.
+        if ev in (1, 2, 5, 6):
             log_event({"ev": "console_kill", "event": int(ev)})
             cancel_all(f"console ctrl event {ev}")
-            notify("LP quoter killed by window close/logoff/shutdown — "
-                   "orders cancelled. The watchdog restarts it unless "
+            notify("LP quoter killed by console close/break/logoff/shutdown "
+                   "— orders cancelled. The watchdog restarts it unless "
                    "data/STOP_LP exists.")
         return False  # let default processing terminate us
 
