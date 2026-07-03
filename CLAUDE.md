@@ -116,22 +116,27 @@ posting).
 
 - Repo auto-deploys from GitHub `main` (https://github.com/NightmewFoxy/Poly1M).
 - `railway.toml` `startCommand` is the source of truth for what Railway runs
-  (the `Procfile` mirrors it). Currently: `python lp_quoter.py`, but **the
-  cloud LP pilot is IDLED (`LP_STOP=1`) since 2026-07-03** — IPRoyal began
-  refusing tunnels from hosting-ASN sources at 12:50 UTC 2026-07-02
-  (CONNECT accepted, upstream never answers, every session; 8h silent
-  outage). Moving the service to `asia-southeast1` (done, via
-  `[deploy.multiRegionConfig]` — a bare `region=` key is overridden by the
-  service's stored multiRegionConfig) did NOT help: the block is by source
-  classification, not region. The same gateway serves consumer-classified
-  sources fine (home PC via Cloudflare WARP egress, verified incl.
-  clob.polymarket.com tunnels). **Quoting therefore runs on the home PC**
-  (`start_lp_pilot.cmd`) until a datacenter-tolerant residential proxy
-  exists again. Service vars: `LP_LIVE=1`, `LP_SHARES=200`,
-  `LP_MARKETS=<pinned Fed-Sep cond id>`, `LP_VIA_PROXY=<IPRoyal url,
-  host pinned>`, `LP_PROXY_ALT_HOSTS=geo.iproyal.com`, `LP_STOP=1`.
-  To retry cloud quoting: unset `LP_STOP`, redeploy, watch for the
-  watchdog's DOWN alert (and create local `data/STOP_LP` first!).
+  (the `Procfile` mirrors it). Currently: `python lp_quoter.py` — **the
+  cloud LP pilot is LIVE on Railway again since 2026-07-03 ~05:06 UTC**
+  (verified: startup cancel_all through the proxy, 2 quotes posted,
+  scoring check all-earning). The 2026-07-02 IPRoyal hosting-ASN block
+  (CONNECT accepted, upstream never answers; 8h silent outage; region move
+  to `asia-southeast1` did NOT help — by source classification, not
+  geography) **LIFTED by 2026-07-03 ~05:00 UTC**: an in-container probe
+  passed 8/8 (`probe_proxy.py`, egress AS400940 → residential exit → CLOB
+  200). Best hypothesis: a temporary abuse flag (the old once-a-minute
+  session-rotation spam) that aged out after ~24h of quiet — NOT confirmed
+  by IPRoyal, so treat it as able to return. **`IPROYAL_FIX_PROMPT.md` is
+  the playbook if it re-blocks** (probe → fresh proxy-user creds →
+  WARP-chain → ticket → other providers), and the rollback is two moves:
+  set `LP_STOP=1` + redeploy, delete local `data\STOP_LP` (home watchdog
+  revives the local pilot in ~5 min). Service vars: `LP_LIVE=1`,
+  `LP_SHARES=200`, `LP_MARKETS=<pinned Fed-Sep cond id>`,
+  `LP_VIA_PROXY=<IPRoyal url, host pinned>`,
+  `LP_PROXY_ALT_HOSTS=geo.iproyal.com` (`LP_STOP` deleted).
+  **CLI gotcha:** `railway ssh -- <cmd>` hangs from this machine (banner,
+  then nothing) — run one-shots via a temporary `startCommand` and read
+  `railway logs` (which streams forever; wrap in a timed job).
 - The Railway CLI is installed locally and logged in (foxychua01@gmail.com,
   project linked). **Quirk:** `~/.claude/settings.json` injects a DEAD
   `RAILWAY_TOKEN` env var that overrides the CLI login — every `railway`
@@ -144,9 +149,11 @@ posting).
   trivia; each push briefly takes the quotes off the book.
 - The `STOP_LP`/`LP_STOP` pair prevents dual-quoting (each instance's
   cancel_all kills the other's orders): whichever side is NOT quoting must
-  hold its kill switch. Currently Railway holds `LP_STOP=1`; the local
-  `data/STOP_LP` is deleted while the home PC is the quoting host. Flip
-  BOTH when moving the pilot.
+  hold its kill switch. Currently the LOCAL `data\STOP_LP` exists (home
+  quoter idle — the file also silences the home watchdog task) and
+  Railway's `LP_STOP` is deleted (cloud is the quoting host). Flip BOTH
+  when moving the pilot; deleting the local STOP_LP alone starts a
+  dual-quote war within ~5 min (watchdog).
 
 ## Critical gotchas (each one cost real debugging hours)
 
@@ -255,6 +262,11 @@ posting).
     (`probe_zero_fee.py`) found zero fee-free arbs.
 
 ## Home-PC watchdog (installed 2026-07-03, owner-approved)
+
+**While the CLOUD quotes (state since 2026-07-03 ~05:06 UTC), the local
+`data\STOP_LP` stays in place and this watchdog idles by design — it is the
+dormant failover, not dead weight. Deleting STOP_LP = dual-quoting against
+Railway within ~5 min.**
 
 Two artifacts OUTSIDE the repo keep the local pilot alive unattended:
 `C:\Users\foxyc\.claude\poly1m_lp_monitor.ps1` + scheduled task

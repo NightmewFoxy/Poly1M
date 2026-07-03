@@ -40,8 +40,9 @@ Safety rails:
 
 Orders need a residential IP (403 from cloud IPs — CLAUDE.md #1): either run
 on the home PC, or run anywhere with LP_VIA_PROXY=<residential proxy url>
-(the pattern the old Railway trading era used; buy a FRESH static
-residential proxy, the .env one is dead).
+(the .env OUTBOUND_PROXY gateway is ALIVE and has carried the cloud pilot's
+orders since 2026-07-03; see IPROYAL_FIX_PROMPT.md if it blocks hosting
+sources again).
 
 Usage:
   python lp_quoter.py            # dry run, loop (safe anywhere)
