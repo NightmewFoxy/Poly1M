@@ -8,7 +8,11 @@ builder = "NIXPACKS"
 # Without those it boots as a read-only dry run - safe default.
 # Remote kill: set LP_STOP=1 and redeploy (cancel-all, then idle).
 # Arb measurement (v3) retired 2026-07-02: fee wall, zero net-positive arbs.
-startCommand = "python lp_quoter.py"
+# TEMPORARY (2026-07-03): run the proxy-path probe instead of the quoter
+# (which idles under LP_STOP=1 anyway) — railway ssh exec hangs from this
+# machine, so the probe rides the startCommand. REVERT to
+# `python lp_quoter.py` after reading the probe output in railway logs.
+startCommand = "sh -c 'python probe_proxy.py; sleep infinity'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 # Singapore, NOT us-west (2026-07-03): IPRoyal stopped serving tunnels to
