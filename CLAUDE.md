@@ -116,24 +116,26 @@ posting).
 
 - Repo auto-deploys from GitHub `main` (https://github.com/NightmewFoxy/Poly1M).
 - `railway.toml` `startCommand` is the source of truth for what Railway runs
-  (the `Procfile` mirrors it). Currently: `python lp_quoter.py` — **the
-  cloud LP pilot is LIVE on Railway again since 2026-07-03 ~05:06 UTC**
-  (verified: startup cancel_all through the proxy, 2 quotes posted,
-  scoring check all-earning). The 2026-07-02 IPRoyal hosting-ASN block
-  (CONNECT accepted, upstream never answers; 8h silent outage; region move
-  to `asia-southeast1` did NOT help — by source classification, not
-  geography) **LIFTED by 2026-07-03 ~05:00 UTC**: an in-container probe
-  passed 8/8 (`probe_proxy.py`, egress AS400940 → residential exit → CLOB
-  200). Best hypothesis: a temporary abuse flag (the old once-a-minute
-  session-rotation spam) that aged out after ~24h of quiet — NOT confirmed
-  by IPRoyal, so treat it as able to return. **`IPROYAL_FIX_PROMPT.md` is
-  the playbook if it re-blocks** (probe → fresh proxy-user creds →
-  WARP-chain → ticket → other providers), and the rollback is two moves:
-  set `LP_STOP=1` + redeploy, delete local `data\STOP_LP` (home watchdog
-  revives the local pilot in ~5 min). Service vars: `LP_LIVE=1`,
-  `LP_SHARES=200`, `LP_MARKETS=<pinned Fed-Sep cond id>`,
+  (the `Procfile` mirrors it). Currently: `python lp_quoter.py` — but **the
+  cloud pilot is PARKED under `LP_STOP=1` since 2026-07-06 ~01:45 UTC: the
+  IPRoyal block RETURNED on 2026-07-05** (504 Gateway Timeout storm through
+  the pinned gateway — DNS unchanged, so not a retired IP; quoter logs went
+  silent 22:11 UTC). During that blind window the No bid FILLED (200 No @
+  0.76, ~$152, 16:52–19:54 UTC) and a stale 200sh Yes bid @ 0.22 sat
+  unmanaged until cancelled by hand from home 2026-07-06 ~01:45 UTC. The
+  documented rollback was executed: `LP_STOP=1` + redeploy on Railway,
+  local `data\STOP_LP` deleted → **the HOME PC is the quoting host again**
+  (one-sided for now: only ~$47 cash remains, the No bid post_errors
+  "not enough balance"; owner to decide whether to sell the 200 No).
+  The 2026-07-03 "abuse flag aged out" hypothesis is now doubtful — the
+  block re-tripped despite the backoff watchdog. **`IPROYAL_FIX_PROMPT.md`
+  is the playbook to restore cloud** (probe → fresh proxy-user creds →
+  WARP-chain → ticket → other providers). Service vars still set:
+  `LP_LIVE=1`, `LP_SHARES=200`, `LP_MARKETS=<pinned Fed-Sep cond id>`,
   `LP_VIA_PROXY=<IPRoyal url, host pinned>`,
-  `LP_PROXY_ALT_HOSTS=geo.iproyal.com` (`LP_STOP` deleted).
+  `LP_PROXY_ALT_HOSTS=geo.iproyal.com`, plus `LP_STOP=1`.
+  Maker fills are INVISIBLE in data-api `/trades` by default — pass
+  `takerOnly=false` or you'll wrongly conclude nothing filled.
   **CLI gotcha:** `railway ssh -- <cmd>` hangs from this machine (banner,
   then nothing) — run one-shots via a temporary `startCommand` and read
   `railway logs` (which streams forever; wrap in a timed job).
