@@ -150,6 +150,25 @@ def _net_fail() -> None:
         _net_fails = 0
 
 
+def _plumb_fail(kind: str) -> None:
+    """Feed the outage watchdog from ANY order-plumbing call, not just posts.
+    The 2026-07-05 blind spot: with 2 quotes resting the loop only calls
+    order_matched/cancel_one — those failed through the dead proxy for hours
+    while _post_fail_streak stayed 0, so DOWN never fired, nothing flattened,
+    a bid filled $152 unattended. Status reads and cancels count now."""
+    global _post_fail_streak
+    _post_fail_streak += 1
+    if _post_fail_streak % 6 == 0:
+        _switch_gateway(f"{_post_fail_streak} consecutive {kind} failures")
+    _net_fail()
+
+
+def _plumb_ok() -> None:
+    global _post_fail_streak
+    _post_fail_streak = 0
+    _net_ok()
+
+
 def _net_ok() -> None:
     global _net_fails
     _net_fails = 0
@@ -386,13 +405,11 @@ def post_buy(token_id: str, price: float, shares: float,
                      size=round(shares, 2), side=BUY)
     opts = PartialCreateOrderOptions(
         neg_risk=neg_risk, tick_size=("0.001" if tick < 0.01 else "0.01"))
-    global _post_fail_streak
     try:
         signed = pmc().clob().create_order(args, options=opts)
         resp = pmc().clob().post_order(signed, OrderType.GTC)
         oid = (resp or {}).get("orderID") or (resp or {}).get("orderId")
-        _post_fail_streak = 0
-        _net_ok()
+        _plumb_ok()
         return str(oid) if oid else None
     except Exception as exc:
         _say(f"post_buy failed {token_id[:10]} @{price}: {exc}")
@@ -418,10 +435,7 @@ def post_buy(token_id: str, price: float, shares: float,
                            "warp-cli tunnel host add clob.polymarket.com). "
                            "Repeats at most every 6h.")
         else:
-            _post_fail_streak += 1
-            if _post_fail_streak % 6 == 0:
-                _switch_gateway(f"{_post_fail_streak} consecutive post failures")
-            _net_fail()
+            _plumb_fail("post")
         return None
 
 
@@ -429,10 +443,14 @@ def order_matched(order_id: str) -> float:
     """Filled size of an order (0.0 if still resting or lookup fails)."""
     try:
         o = pmc().clob().get_order(order_id)
-        _net_ok()
+        _plumb_ok()
         return float((o or {}).get("size_matched") or 0)
-    except Exception:
-        _net_fail()
+    except Exception as exc:
+        sc = getattr(exc, "status_code", None)
+        if sc is not None and 400 <= int(sc) < 500 and int(sc) != 429:
+            _net_ok()  # exchange answered — path is up, just a bad lookup
+        else:
+            _plumb_fail("status-read")
         return 0.0
 
 
@@ -450,11 +468,14 @@ def cancel_one(order_id: str) -> bool:
         if bad:
             _say(f"cancel_order {order_id[:12]} not canceled: {bad}")
             log_event({"ev": "cancel_refused", "order": order_id, "resp": str(bad)[:200]})
-        _net_ok()
+        _plumb_ok()
         return True
     except Exception as exc:
         _say(f"cancel_order {order_id[:12]} failed: {exc}")
         _rotate_proxy_session("cancel_order failure")  # cancels are safety-critical
+        sc = getattr(exc, "status_code", None)
+        if sc is None or not (400 <= int(sc) < 500) or int(sc) == 429:
+            _plumb_fail("cancel")
         return False
 
 
