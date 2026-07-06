@@ -114,6 +114,18 @@ posting).
 
 ## Deployment (Railway)
 
+> **🛑 PROJECT SHUT DOWN 2026-07-06 (owner request "shut down this entire
+> project").** Live state at shutdown: home quoter stopped via `data\STOP_LP`
+> (triple cancel-all confirmed — no resting quotes); the **home-PC watchdog
+> scheduled task was DELETED** (`schtasks /Delete /TN "Poly1M LP watchdog"`),
+> so nothing auto-restarts the quoter anymore; `data\STOP_ARB` pre-armed. No
+> open positions (`/value`=$0), trading wallet `0x832Ddc…` holds $0 USDC — the
+> 200-No/Fed-Sep pilot is fully closed out. **Railway was LEFT PARKED as-is**
+> (owner's call): service still `● Online` but idle under `LP_STOP=1`
+> (not quoting, not trading). To fully revive: re-create the watchdog task,
+> delete both STOP files, flip `LP_STOP`, and re-read the pilot playbook.
+> Everything below describes the pre-shutdown pilot and is kept for that revival.
+
 - Repo auto-deploys from GitHub `main` (https://github.com/NightmewFoxy/Poly1M).
 - `railway.toml` `startCommand` is the source of truth for what Railway runs
   (the `Procfile` mirrors it). Currently: `python lp_quoter.py` — but **the
@@ -263,7 +275,14 @@ posting).
     measurement writes a fee-aware **v3** log. A 30-min fee-free probe
     (`probe_zero_fee.py`) found zero fee-free arbs.
 
-## Home-PC watchdog (installed 2026-07-03, owner-approved)
+## Home-PC watchdog (installed 2026-07-03, REMOVED 2026-07-06)
+
+> **🛑 The scheduled task "Poly1M LP watchdog" was DELETED at the 2026-07-06
+> project shutdown — it no longer runs and no longer resurrects the quoter.**
+> The `.ps1` monitor script (`C:\Users\foxyc\.claude\poly1m_lp_monitor.ps1`)
+> is left in place but inert. To revive the pilot you must re-create the task
+> (see the retire/re-add note at the end of this section). The rest of this
+> section describes the watchdog as it worked while active.
 
 **While the CLOUD quotes (state since 2026-07-03 ~05:06 UTC), the local
 `data\STOP_LP` stays in place and this watchdog idles by design — it is the
