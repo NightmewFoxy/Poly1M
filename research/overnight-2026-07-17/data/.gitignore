@@ -1,0 +1,7 @@
+*.csv
+*.parquet
+*.jsonl
+*.zip
+*.json
+!*.py
+!*.md
