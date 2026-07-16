@@ -15,7 +15,7 @@ descoped — see PROTOCOL amendment.**
 | # | slug | strategy | prior | status | notes |
 |---|---|---|---|---|---|
 | 1 | tsmom-daily | Time-series momentum / trend on BTC+ETH+SOL perps (daily, long-short) | P1 | **MARGINAL** | VERIFIED iter 3: +12.1%/yr net OOS, Sharpe 0.49, maxDD −38.5%, params fragile, LS variants negative. verdicts/tsmom-daily.md. Data: daily candles 2019→now (Bybit/OKX/data.binance.vision). Grid IS ≤2023, OOS 2024→now. Include fees 0.06%+slip per side. Also test vol-scaled sizing + Donchian breakout variant in same harness. Academic sweep: SSRN 5209907 (Concretum) claims Donchian multi-horizon ensemble on top-20 coins, Sharpe>1.5 NET, +10.8%/yr alpha — strongest in-scope external evidence so far; extend to top-20 rotation via xsmom row if majors verify. |
-| 2 | funding-fade | Funding-rate as DIRECTIONAL signal: fade crowded positioning (short extreme+funding pumps / long extreme−funding dumps), unhedged | P2 | queued | DOWNGRADED by directional sweep: one study finds near-zero single-asset predictive power, and the fade was short-biased through 2024's rally. Test the CROSS-SECTIONAL version (rank by funding, fade extremes vs peers) with tempered expectations. Data cached (funding_hist_bybit.json) + candles. |
+| 2 | funding-fade | Funding-rate as DIRECTIONAL signal: fade crowded positioning (short extreme+funding pumps / long extreme−funding dumps), unhedged | P2 | **DEAD (both dir)** | DOWNGRADED by directional sweep: one study finds near-zero single-asset predictive power, and the fade was short-biased through 2024's rally. Test the CROSS-SECTIONAL version (rank by funding, fade extremes vs peers) with tempered expectations. Data cached (funding_hist_bybit.json) + candles. |
 | 3 | xsmom-alts | Cross-sectional momentum: long top-quintile / short bottom-quintile alt perps, weekly rotate | P1 | **VIABLE** | VERIFIED iter 4 → NEW LEADER: ensemble +26.1%/yr net OOS clean-universe, Sharpe 1.07, maxDD −19.6%. verdicts/xsmom-alts.md |
 | 4 | liq-wick-reversion | Buy violent liquidation dumps / sell squeezes intraday on majors (mean reversion after forced flow) | P2 | queued | Data: 1m klines from data.binance.vision bulk zips (BTC/ETH/SOL 2024→now). Define wick/velocity trigger IS, OOS test. Fees hurt at this frequency — taker both ways. |
 | 5 | seasonality | Hour-of-day / day-of-week / session effects on BTC/ETH perps (long/short by clock) | P2 | **DEAD (net)** | Hourly candles 2021→now. Strict multiple-hypothesis discipline: discover IS ≤2024, confirm OOS 2025→now. Practitioner sweep: "Monday Asia open" momentum claim 28%/yr, 60% win/103 trades, single-sourced vendor-adjacent — test that specific hypothesis too. |
@@ -111,3 +111,15 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   funding, SHORT top quintile / LONG bottom quintile, daily+weekly variants,
   IS 2024 / OOS 2025→now (funding data starts 2024-01). If overlap too thin,
   re-probe Bybit for candles (block may have aged out).
+- **Iter 7 — 20:22–20:40 UTC (04:22 MYT):** funding-fade VERIFIED → **DEAD both
+  directions**. FADE anti-alpha everywhere (−36..−55%/yr OOS). FOLLOW looked
+  spectacular on the contaminated universe (+51%/yr OOS incl. funding drag) but
+  the old-guard control killed it (−35%/yr) — survivorship artifact, textbook.
+  Funding P&L term added to the engine (FOLLOW pays funding both legs; cut
+  headline 77.6→51.1 before the control finished it). xsmom remains the only
+  clean-control survivor. NEXT: iter 8 = **event-drift (pre-FOMC)**: cached BTC
+  1H + FOMC statement dates 2022→2026 (verify dates via WebSearch first),
+  long 24h pre-statement → flat at 18:00/19:00 UTC announcement; also post-drift
+  check. Cheap and pre-registered. Then: pairs-statarb (cached dailies),
+  btc-leads-alts (cached 1H), intraday-tsmom hourly adaptation. liq-wick needs
+  1m data (probe data.binance.vision); oi-extreme needs Bybit (blocked).
