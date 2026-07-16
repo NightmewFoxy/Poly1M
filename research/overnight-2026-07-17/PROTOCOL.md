@@ -117,6 +117,26 @@ documented kill factor.
 - Build a Polymarket-vs-Deribit sampler only when that candidate reaches verification.
 - Errors are written as JSONL rows too — an unreachable venue is itself a finding.
 
+## SCOPE AMENDMENT — owner directive 2026-07-17 02:50 MYT (overrides Search space)
+Goal restated by owner mid-run: **find the highest-profitability TRADING strategy —
+crypto futures, longing and shorting.** EXCLUDE anything staking/investing/passive-
+yield-like and "everything unrelated to trading". Concretely:
+- IN SCOPE (priority): directional long/short futures/perp strategies — trend &
+  time-series momentum, cross-sectional momentum (long winners/short losers),
+  mean reversion, breakouts, funding-rate-as-SIGNAL (fade crowded positioning —
+  directional, not harvest), liquidation-cascade/wick reversion, open-interest &
+  long-short-ratio signals, lead-lag (BTC→alts), session/seasonality effects,
+  event trading (FOMC/CPI drift), pairs/stat-arb long-short on perps, vol-scaled
+  variants of all of the above.
+- OUT OF SCOPE (descoped): funding HARVEST (delta-neutral carry — verified, kept
+  as baseline), cash-and-carry basis, cross-exchange/triangular arb, grid/passive
+  MM, perp-DEX incentive farming, Polymarket×Deribit relative value, lending/
+  staking anything. Their queue rows stay for the record, marked `descoped`.
+- The verified funding-harvest baseline (~10.6%/yr net OOS) is the bar: an
+  in-scope strategy that can't beat it net OOS is not worth the owner's time.
+- Leverage: perps allow it; report results at 1x AND note how leverage scales
+  return/drawdown/liquidation risk honestly.
+
 ## Failure handling
 API/geo/rate failures: log to LEDGER data-source notes, fall back to an alternate
 venue or `data.binance.vision` dumps, keep going. If ALL model work starts failing
