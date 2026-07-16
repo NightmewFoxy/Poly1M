@@ -32,3 +32,4 @@ kept as reference baselines, not candidates.
 | pairs-statarb (rolling-z pairs MR) | Regime decay: IS Sharpe 2.35 → OOS −17.6%/yr, ALL frozen pairs negative; ETH/BTC ≈ 0. 2024-26 is a momentum regime — mean reversion loses. |
 | btc-leads-alts (hourly lead-lag) | No retail-latency lag on majors: every follow cell negative (t to −6); real lag is sub-minute/HFT. |
 | intraday-tsmom (first hours → rest of day) | All cells negative both periods; 30-min paper effect doesn't survive hourly granularity + daily fee drag. |
+| institutional-demand-drift (Coinbase premium / ETF flows) | 2024-ETF-launch regime artifact: IS Sharpe 2.4 → OOS Sharpe 0.47 with sign-flipping configs. |

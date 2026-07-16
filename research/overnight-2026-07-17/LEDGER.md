@@ -165,6 +165,13 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   unchallenged. Gap-sweep agent still running. NEXT: triage gap-sweep on its
   notification (test anything credible); otherwise heartbeats, keep MORNING.md
   + LEADERBOARD current.
+- **Iter 15 — 21:20–21:35 UTC (05:20 MYT):** gap-sweep triaged: candidate 1
+  (Coinbase premium / ETF flows) TESTED → **DEAD** (2024 launch-regime artifact,
+  IS Sharpe 2.4 → OOS 0.47 sign-flipping); candidate 2 (1h stablecoin flows)
+  UNVERIFIABLE-DATA + low prior; its rule-outs matched our verdicts. Search
+  space is now genuinely exhausted for the night. MORNING.md updated. NEXT:
+  compute TODAY'S live xsmom basket (what we'd hold right now) as a concrete
+  morning deliverable, then throttle to 1800s heartbeats (samplers check only).
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =

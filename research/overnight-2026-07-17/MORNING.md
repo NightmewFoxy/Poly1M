@@ -66,9 +66,11 @@ every control. That's also the warning: when the regime turns, xsmom's +20-30%
 becomes 2022-23's +10% (it stayed positive, but plan for the downshift).
 
 ## Open threads (not blockers)
-- Gap-sweep agent (novel mechanisms: on-chain flows, ETF flows, vol-regime
-  switching, sector rotation) — pending when this was written; leaderboard
-  reflects the final state.
+- Gap-sweep CLOSED: it surfaced 2 genuinely new mechanisms. (1) Coinbase-premium
+  / ETF-flow → next-day BTC: TESTED — a 2024-ETF-launch artifact, DEAD OOS
+  (Sharpe 0.47, sign-flipping configs). (2) 1h stablecoin exchange-flow
+  forecasting: data-gated (paid tiers) + 1h signals died at fees all night —
+  skipped. Everything else it found collapsed into already-tested families.
 - oi-extreme: retest when Bybit unblocks this IP (hours).
 - Overnight samplers recorded cross-exchange spreads + funding all night under
   data/ for any follow-up.
