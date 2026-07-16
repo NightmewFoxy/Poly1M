@@ -172,6 +172,11 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   space is now genuinely exhausted for the night. MORNING.md updated. NEXT:
   compute TODAY'S live xsmom basket (what we'd hold right now) as a concrete
   morning deliverable, then throttle to 1800s heartbeats (samplers check only).
+- **Iter 16 — 21:40 UTC (05:40 MYT):** today's live xsmom basket computed and
+  added to MORNING.md (LONG UNI/AAVE/ETH, SHORT BCH/XRP/DOGE). All work items
+  complete: 14 families verified, MORNING.md final. Loop enters THROTTLE mode
+  (1800s heartbeats: sampler check, refresh basket if stale >6h, otherwise
+  idle) until the owner interrupts.
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =

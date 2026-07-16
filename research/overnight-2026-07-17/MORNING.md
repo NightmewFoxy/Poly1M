@@ -36,6 +36,11 @@ rebalance-phase robustness).
    orders). ~20 min/week of ops, or a small script.
 5. Kill rule suggestion: stop and reassess if rolling 60d P&L < −15%.
 
+## If deployed today (indicative basket, computed 20:16 UTC from last confirmed daily close)
+**LONG (⅙ of capital each): UNI, AAVE, ETH · SHORT (⅙ each): BCH, XRP, DOGE.**
+Full ranking + per-lookback returns in `data/xsmom_today.py` output (rerun it any
+time for a fresh basket — it takes ~20 seconds and places no orders).
+
 ## The honest reality check vs the RM200/day goal
 RM200/day ≈ $42/day needs ~$50–75k deployed at these verified rates. At $5k the
 best real, verified expectation is **$3–4/day** — crypto futures at retail scale
