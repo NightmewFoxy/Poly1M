@@ -22,7 +22,7 @@ descoped — see PROTOCOL amendment.**
 | 6 | pairs-statarb | Long/short pairs on perps (ETHBTC ratio MR; cointegrated alt pairs) | P2 | queued | In scope (it IS long-short futures). Cointegration IS 2022-2024, OOS 2025→now, fees both legs. Practitioner sweep: low-tier paper claims Sharpe 1.58-2.45 on BTC-ETH pair — replicate, expect decay. |
 | 7 | btc-leads-alts | Lead-lag: BTC big move → alts follow (long/short alts on BTC impulse) | P2 | queued | Hourly/15m candles BTC + top alts. Test signal lag structure IS, OOS confirm. Retail latency OK if effect persists hours. |
 | 8 | oi-extreme | Open-interest spikes / long-short-ratio extremes as reversal or continuation signal | P3 | queued | Bybit has OI history endpoint (verify depth); combine with price. Mark UNVERIFIABLE-DATA if history too shallow. |
-| 9 | event-drift | Pre-FOMC drift on BTC: long ~24h before FOMC statement, flat at announcement | P2 | queued | UPGRADED by directional sweep: BTC +0.96% avg day-before-FOMC claim, echoes Lucca-Moench equity drift. FOMC ONLY (CPI debunked — no consistent effect). ~20 events/yr: small-sample honesty required. Data: hourly candles + FOMC dates 2022-2026. |
+| 9 | event-drift | Pre-FOMC drift on BTC: long ~24h before FOMC statement, flat at announcement | P2 | **DEAD** | UPGRADED by directional sweep: BTC +0.96% avg day-before-FOMC claim, echoes Lucca-Moench equity drift. FOMC ONLY (CPI debunked — no consistent effect). ~20 events/yr: small-sample honesty required. Data: hourly candles + FOMC dates 2022-2026. |
 | 10 | stablecoin-depeg | Depeg mean-reversion (buy panic, sell repeg) — event TRADING | P3 | queued | Episodic; verify known events + frequency. Tail-risk honest (USTC went to 0). |
 | 12 | intraday-tsmom | Intraday TSMOM: first-30min return predicts last-30min return on HIGH-VOL days only (Shen/Urquhart/Wang, Financial Review) | P3 | queued | Peer-reviewed but figures unverified (paywalled); needs 30m candles; 2 taker fees/day is a high bar. Re-verify on 2024-2026. |
 | 11 | rsi-meanrev | Short-timeframe RSI/Bollinger mean reversion on liquid perps (5m-4h bars) | P2 | **DEAD** | Academic sweep: StratProof forward test on REAL Binance fees — 6/22 strategies survived, ALL were RSI mean-reversion; every trend variant lost. 10-day sample too short → backtest 2023→now, IS/OOS, taker fees. |
@@ -123,3 +123,9 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   check. Cheap and pre-registered. Then: pairs-statarb (cached dailies),
   btc-leads-alts (cached 1H), intraday-tsmom hourly adaptation. liq-wick needs
   1m data (probe data.binance.vision); oi-extreme needs Bybit (blocked).
+- **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
+  **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
+  case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =
+  **pairs-statarb** from cached OKX dailies: ETHBTC ratio z-score MR + top
+  cointegrated old-guard pairs; IS 2022-2023 fit (lookback, entry/exit z),
+  OOS 2024→now, fees both legs. Expect decay per academic sweep; verify.
