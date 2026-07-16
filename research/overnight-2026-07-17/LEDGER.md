@@ -17,7 +17,7 @@ descoped — see PROTOCOL amendment.**
 | 1 | tsmom-daily | Time-series momentum / trend on BTC+ETH+SOL perps (daily, long-short) | P1 | **MARGINAL** | VERIFIED iter 3: +12.1%/yr net OOS, Sharpe 0.49, maxDD −38.5%, params fragile, LS variants negative. verdicts/tsmom-daily.md. Data: daily candles 2019→now (Bybit/OKX/data.binance.vision). Grid IS ≤2023, OOS 2024→now. Include fees 0.06%+slip per side. Also test vol-scaled sizing + Donchian breakout variant in same harness. Academic sweep: SSRN 5209907 (Concretum) claims Donchian multi-horizon ensemble on top-20 coins, Sharpe>1.5 NET, +10.8%/yr alpha — strongest in-scope external evidence so far; extend to top-20 rotation via xsmom row if majors verify. |
 | 2 | funding-fade | Funding-rate as DIRECTIONAL signal: fade crowded positioning (short extreme+funding pumps / long extreme−funding dumps), unhedged | P2 | **DEAD (both dir)** | DOWNGRADED by directional sweep: one study finds near-zero single-asset predictive power, and the fade was short-biased through 2024's rally. Test the CROSS-SECTIONAL version (rank by funding, fade extremes vs peers) with tempered expectations. Data cached (funding_hist_bybit.json) + candles. |
 | 3 | xsmom-alts | Cross-sectional momentum: long top-quintile / short bottom-quintile alt perps, weekly rotate | P1 | **VIABLE** | VERIFIED iter 4 → NEW LEADER: ensemble +26.1%/yr net OOS clean-universe, Sharpe 1.07, maxDD −19.6%. verdicts/xsmom-alts.md |
-| 4 | liq-wick-reversion | Buy violent liquidation dumps / sell squeezes intraday on majors (mean reversion after forced flow) | P2 | queued | Data: 1m klines from data.binance.vision bulk zips (BTC/ETH/SOL 2024→now). Define wick/velocity trigger IS, OOS test. Fees hurt at this frequency — taker both ways. |
+| 4 | liq-wick-reversion | Buy violent liquidation dumps / sell squeezes intraday on majors (mean reversion after forced flow) | P2 | **MARGINAL (weak)** | Iter 12: dump-buy IS t=4 → OOS +15-29%/yr but t<2; pump-short anti-alpha. 5m data cached. verdicts/liq-wick-reversion.md |
 | 5 | seasonality | Hour-of-day / day-of-week / session effects on BTC/ETH perps (long/short by clock) | P2 | **DEAD (net)** | Hourly candles 2021→now. Strict multiple-hypothesis discipline: discover IS ≤2024, confirm OOS 2025→now. Practitioner sweep: "Monday Asia open" momentum claim 28%/yr, 60% win/103 trades, single-sourced vendor-adjacent — test that specific hypothesis too. |
 | 6 | pairs-statarb | Long/short pairs on perps (ETHBTC ratio MR; cointegrated alt pairs) | P2 | **DEAD** | In scope (it IS long-short futures). Cointegration IS 2022-2024, OOS 2025→now, fees both legs. Practitioner sweep: low-tier paper claims Sharpe 1.58-2.45 on BTC-ETH pair — replicate, expect decay. |
 | 7 | btc-leads-alts | Lead-lag: BTC big move → alts follow (long/short alts on BTC impulse) | P2 | **DEAD** | Iter 10: every follow cell negative IS (t to −6); no retail-latency lag on majors. verdicts/leadlag-intraday.md |
@@ -142,6 +142,15 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   iter 12 = **liq-wick-reversion**: probe data.binance.vision for 1m kline zips
   (BTC/ETH/SOL 2024→now); if blocked, OKX 1m too slow → UNVERIFIABLE-DATA.
   Then iter 13 = oi-extreme (re-probe Bybit) + stablecoin-depeg desk note.
+- **Iter 12 — 20:22–20:40 UTC (04:22 MYT):** liq-wick-reversion VERIFIED →
+  **MARGINAL (weak)**: dump-buy real in 2024 (t=4) but decayed ~85% OOS
+  (+15-29%/yr point estimates, t<2 everywhere); pump-short anti-alpha;
+  volume filter useless. data.binance.vision reachable — 5m futures klines
+  2024→2026-06 cached for majors. NEXT: iter 13 = cleanup pass: re-probe Bybit
+  (if alive → quick **oi-extreme** check via OI history endpoint), write
+  **stablecoin-depeg** desk-note verdict (episodic, small-n, likely
+  UNVERIFIABLE tonight), then queue is empty → sweep round 2 (novel directional
+  ideas only) or throttle to heartbeats if nothing new.
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =

@@ -18,6 +18,7 @@ kept as reference baselines, not candidates.
 |---|---|---|---|---|---|---|---|
 | 1 | xsmom-alts (L/S alt momentum ensemble) | VIABLE | $0.71 | $3.57 | −9.4% (maxDD −19.6%) | ~20 min/week | +26.1%/yr net OOS survivorship-clean, Sharpe 1.07, selection-free, sign-robust everywhere; full-universe upper bound +87%/yr. |
 | 2 | tsmom-daily (long-flat trend, majors) | MARGINAL | $0.33 | $1.66 | −24.6% (maxDD −38.5%) | ~10 min/day | +12.1%/yr net OOS but fragile params, huge DD, long-short variants negative; a diversifier, not a money-maker. |
+| 3 | liq-wick-reversion (buy 5m liquidation dumps) | MARGINAL (weak) | $0.46 | $2.32 | fat per-event tails | 24/7 bot needed | 2024 effect (t=4) decayed ~85%: OOS +15–29%/yr point estimates but t<2 everywhere; knife-catching risk; possible future add-on module. |
 | ref | funding-harvest (DESCOPED: yield) | MARGINAL | $0.29 | $1.45 | −2.4% | ~15 min/day | Real but small: +10.6%/yr net OOS (2025→now), slow+selective only; the bar for in-scope strategies. |
 
 ## Rejected (verified DEAD)
