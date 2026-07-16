@@ -46,3 +46,10 @@ fixed-1x + vol-target 30% sizing. 50 combos.
 Real but weak and regime-dependent: +12%/yr net OOS at 1x with −38% drawdowns is
 not a "highest-profitability" candidate — it's a diversifier. Keep as reference;
 hopes for the family now ride on cross-sectional alt momentum (`xsmom-alts`).
+
+## Addendum (iter 14): vol-targeting check (external claim "Sharpe 1.12→1.42")
+OOS 2024→now, vol-target 30%-ann sizing vs 1x (`data/tsmom_vt_check.py`):
+tsmom30-vt +8.0%/yr Sh 0.50 maxDD −26.2%; sma50-vt +13.3%/yr Sh 0.75 maxDD
+−20.1%; tsmom120-vt +14.5%/yr Sh 0.77 maxDD −18.3%. Vol-targeting halves the
+drawdown but Sharpe stays 0.5–0.8 — the claimed 1.4 does NOT reproduce post-2024
+on majors. Verdict unchanged (MARGINAL); xsmom remains strictly better.

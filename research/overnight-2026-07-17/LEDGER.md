@@ -159,6 +159,12 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   when it lands; if nothing new testable → write **MORNING.md** consolidated
   brief (the answer to "which strategy do we proceed with"), final push, then
   throttle heartbeats (~1800s) with sampler checks until owner wakes.
+- **Iter 14 — 21:07–21:15 UTC (05:07 MYT):** MORNING.md brief written + pushed
+  (the consolidated answer). Vol-targeting addendum to tsmom verdict: halves DD
+  but Sharpe stays 0.5-0.8 — external "1.42" claim does not reproduce; xsmom
+  unchallenged. Gap-sweep agent still running. NEXT: triage gap-sweep on its
+  notification (test anything credible); otherwise heartbeats, keep MORNING.md
+  + LEADERBOARD current.
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =
