@@ -26,3 +26,5 @@ kept as reference baselines, not candidates.
 | funding-follow (long high-funding) | Survivorship artifact: +51%/yr on contaminated universe → −35%/yr on clean 9-major control. Funding rank = "recently-listed hot coin" proxy, no real signal. |
 | event-drift (pre-FOMC long) | t≈1.1 noise over 36 events; sign REVERSED 2024→now (−26bp net/event); best case +2.5%/yr. |
 | pairs-statarb (rolling-z pairs MR) | Regime decay: IS Sharpe 2.35 → OOS −17.6%/yr, ALL frozen pairs negative; ETH/BTC ≈ 0. 2024-26 is a momentum regime — mean reversion loses. |
+| btc-leads-alts (hourly lead-lag) | No retail-latency lag on majors: every follow cell negative (t to −6); real lag is sub-minute/HFT. |
+| intraday-tsmom (first hours → rest of day) | All cells negative both periods; 30-min paper effect doesn't survive hourly granularity + daily fee drag. |
