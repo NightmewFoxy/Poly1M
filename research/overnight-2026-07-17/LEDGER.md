@@ -18,7 +18,7 @@ descoped — see PROTOCOL amendment.**
 | 2 | funding-fade | Funding-rate as DIRECTIONAL signal: fade crowded positioning (short extreme+funding pumps / long extreme−funding dumps), unhedged | P2 | queued | DOWNGRADED by directional sweep: one study finds near-zero single-asset predictive power, and the fade was short-biased through 2024's rally. Test the CROSS-SECTIONAL version (rank by funding, fade extremes vs peers) with tempered expectations. Data cached (funding_hist_bybit.json) + candles. |
 | 3 | xsmom-alts | Cross-sectional momentum: long top-quintile / short bottom-quintile alt perps, weekly rotate | P1 | **VIABLE** | VERIFIED iter 4 → NEW LEADER: ensemble +26.1%/yr net OOS clean-universe, Sharpe 1.07, maxDD −19.6%. verdicts/xsmom-alts.md |
 | 4 | liq-wick-reversion | Buy violent liquidation dumps / sell squeezes intraday on majors (mean reversion after forced flow) | P2 | queued | Data: 1m klines from data.binance.vision bulk zips (BTC/ETH/SOL 2024→now). Define wick/velocity trigger IS, OOS test. Fees hurt at this frequency — taker both ways. |
-| 5 | seasonality | Hour-of-day / day-of-week / session effects on BTC/ETH perps (long/short by clock) | P2 | queued | Hourly candles 2021→now. Strict multiple-hypothesis discipline: discover IS ≤2024, confirm OOS 2025→now. Practitioner sweep: "Monday Asia open" momentum claim 28%/yr, 60% win/103 trades, single-sourced vendor-adjacent — test that specific hypothesis too. |
+| 5 | seasonality | Hour-of-day / day-of-week / session effects on BTC/ETH perps (long/short by clock) | P2 | **DEAD (net)** | Hourly candles 2021→now. Strict multiple-hypothesis discipline: discover IS ≤2024, confirm OOS 2025→now. Practitioner sweep: "Monday Asia open" momentum claim 28%/yr, 60% win/103 trades, single-sourced vendor-adjacent — test that specific hypothesis too. |
 | 6 | pairs-statarb | Long/short pairs on perps (ETHBTC ratio MR; cointegrated alt pairs) | P2 | queued | In scope (it IS long-short futures). Cointegration IS 2022-2024, OOS 2025→now, fees both legs. Practitioner sweep: low-tier paper claims Sharpe 1.58-2.45 on BTC-ETH pair — replicate, expect decay. |
 | 7 | btc-leads-alts | Lead-lag: BTC big move → alts follow (long/short alts on BTC impulse) | P2 | queued | Hourly/15m candles BTC + top alts. Test signal lag structure IS, OOS confirm. Retail latency OK if effect persists hours. |
 | 8 | oi-extreme | Open-interest spikes / long-short-ratio extremes as reversal or continuation signal | P3 | queued | Bybit has OI history endpoint (verify depth); combine with price. Mark UNVERIFIABLE-DATA if history too shallow. |
@@ -102,3 +102,12 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   (QuantPedia BTC 21:00→23:00 UTC long; "Monday Asia open"; Sunday-23:00-UTC
   US-reentry), then honest hour/day discovery IS ≤2024 → confirm OOS 2025→now,
   fees included. Also check samplers alive (last verified 18:44 UTC).
+- **Iter 6 — 20:08–20:20 UTC (04:08 MYT):** seasonality VERIFIED → **DEAD net of
+  fees**. Real finding preserved: 20:00–23:00 UTC long drift +5–7bp/day gross
+  (t 2–3, holds OOS) — fees eat it; keep as execution-timing tailwind (do xsmom
+  rebalances ~20:00 UTC). Day-of-week = noise. Samplers alive (489/675 rows @
+  20:05). NEXT: iter 7 = **funding-fade** cross-sectional: Bybit funding history
+  (cached, 30 syms) ∩ OKX candles (cached, 36 syms) — rank by trailing 3d
+  funding, SHORT top quintile / LONG bottom quintile, daily+weekly variants,
+  IS 2024 / OOS 2025→now (funding data starts 2024-01). If overlap too thin,
+  re-probe Bybit for candles (block may have aged out).

@@ -21,3 +21,4 @@ kept as reference baselines, not candidates.
 | strategy | kill factor |
 |---|---|
 | rsi-meanrev (RSI dip-buy/top-sell, 1H/4H majors) | Fee bleed × trade frequency; gross edge ≈0 — ALL 24 configs negative OOS (best-IS pick −26.4%/yr). External "survived fees" claim = 10-day noise. |
+| seasonality (time-of-day/day-of-week windows) | Real 20–23 UTC gross drift (+5–7bp/d, t≈2–3) but 14bp round-trip fees eat it; dow = noise. Keep only as execution-timing tailwind for other strategies. |
