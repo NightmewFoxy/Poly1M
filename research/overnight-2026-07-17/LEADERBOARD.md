@@ -20,4 +20,4 @@ kept as reference baselines, not candidates.
 ## Rejected (verified DEAD)
 | strategy | kill factor |
 |---|---|
-| — | — |
+| rsi-meanrev (RSI dip-buy/top-sell, 1H/4H majors) | Fee bleed × trade frequency; gross edge ≈0 — ALL 24 configs negative OOS (best-IS pick −26.4%/yr). External "survived fees" claim = 10-day noise. |

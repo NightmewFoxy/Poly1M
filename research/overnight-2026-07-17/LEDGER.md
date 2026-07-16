@@ -25,7 +25,7 @@ descoped — see PROTOCOL amendment.**
 | 9 | event-drift | Pre-FOMC drift on BTC: long ~24h before FOMC statement, flat at announcement | P2 | queued | UPGRADED by directional sweep: BTC +0.96% avg day-before-FOMC claim, echoes Lucca-Moench equity drift. FOMC ONLY (CPI debunked — no consistent effect). ~20 events/yr: small-sample honesty required. Data: hourly candles + FOMC dates 2022-2026. |
 | 10 | stablecoin-depeg | Depeg mean-reversion (buy panic, sell repeg) — event TRADING | P3 | queued | Episodic; verify known events + frequency. Tail-risk honest (USTC went to 0). |
 | 12 | intraday-tsmom | Intraday TSMOM: first-30min return predicts last-30min return on HIGH-VOL days only (Shen/Urquhart/Wang, Financial Review) | P3 | queued | Peer-reviewed but figures unverified (paywalled); needs 30m candles; 2 taker fees/day is a high bar. Re-verify on 2024-2026. |
-| 11 | rsi-meanrev | Short-timeframe RSI/Bollinger mean reversion on liquid perps (5m-4h bars) | P2 | queued | Academic sweep: StratProof forward test on REAL Binance fees — 6/22 strategies survived, ALL were RSI mean-reversion; every trend variant lost. 10-day sample too short → backtest 2023→now, IS/OOS, taker fees. |
+| 11 | rsi-meanrev | Short-timeframe RSI/Bollinger mean reversion on liquid perps (5m-4h bars) | P2 | **DEAD** | Academic sweep: StratProof forward test on REAL Binance fees — 6/22 strategies survived, ALL were RSI mean-reversion; every trend variant lost. 10-day sample too short → backtest 2023→now, IS/OOS, taker fees. |
 
 Non-queued notes from academic sweep: hourly ML (XGBoost) forecasting = DEAD by
 its own rigorous paper (arXiv 2606.00060: naive −64% net; cost-aware ≈ buy-and-hold);
@@ -94,3 +94,11 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   CME-gap-fill dead (24/7 CME since 2026-05-29). NEXT: iter 5 = **rsi-meanrev**
   (OKX 1H/4H candles majors, RSI-extreme entries, IS ≤2024 / OOS 2025→now) —
   highest remaining prior (survived a real-fee forward test externally).
+- **Iter 5 — 19:47–20:05 UTC (03:47 MYT):** rsi-meanrev VERIFIED → **DEAD** (all
+  24 configs negative OOS; fee bleed × trade count; the external "survived real
+  fees" claim was 10-day noise). OKX 1H candles for majors now CACHED
+  (rsimr_candles_1h.json, 42k bars/sym) — makes seasonality nearly free. NEXT:
+  iter 6 = **seasonality** on cached 1H data; pre-registered windows first
+  (QuantPedia BTC 21:00→23:00 UTC long; "Monday Asia open"; Sunday-23:00-UTC
+  US-reentry), then honest hour/day discovery IS ≤2024 → confirm OOS 2025→now,
+  fees included. Also check samplers alive (last verified 18:44 UTC).
