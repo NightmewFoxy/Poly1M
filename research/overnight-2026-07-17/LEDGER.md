@@ -21,9 +21,9 @@ descoped — see PROTOCOL amendment.**
 | 5 | seasonality | Hour-of-day / day-of-week / session effects on BTC/ETH perps (long/short by clock) | P2 | **DEAD (net)** | Hourly candles 2021→now. Strict multiple-hypothesis discipline: discover IS ≤2024, confirm OOS 2025→now. Practitioner sweep: "Monday Asia open" momentum claim 28%/yr, 60% win/103 trades, single-sourced vendor-adjacent — test that specific hypothesis too. |
 | 6 | pairs-statarb | Long/short pairs on perps (ETHBTC ratio MR; cointegrated alt pairs) | P2 | **DEAD** | In scope (it IS long-short futures). Cointegration IS 2022-2024, OOS 2025→now, fees both legs. Practitioner sweep: low-tier paper claims Sharpe 1.58-2.45 on BTC-ETH pair — replicate, expect decay. |
 | 7 | btc-leads-alts | Lead-lag: BTC big move → alts follow (long/short alts on BTC impulse) | P2 | **DEAD** | Iter 10: every follow cell negative IS (t to −6); no retail-latency lag on majors. verdicts/leadlag-intraday.md |
-| 8 | oi-extreme | Open-interest spikes / long-short-ratio extremes as reversal or continuation signal | P3 | queued | Bybit has OI history endpoint (verify depth); combine with price. Mark UNVERIFIABLE-DATA if history too shallow. |
+| 8 | oi-extreme | Open-interest spikes / long-short-ratio extremes as reversal or continuation signal | P3 | **UNVERIFIABLE-DATA** | Iter 13: Bybit blocked, OKX Rubik = 180d only, Binance 30d. Settle later via Bybit OI history. Prior LOW (correlates w/ funding+momentum, both tested). |
 | 9 | event-drift | Pre-FOMC drift on BTC: long ~24h before FOMC statement, flat at announcement | P2 | **DEAD** | UPGRADED by directional sweep: BTC +0.96% avg day-before-FOMC claim, echoes Lucca-Moench equity drift. FOMC ONLY (CPI debunked — no consistent effect). ~20 events/yr: small-sample honesty required. Data: hourly candles + FOMC dates 2022-2026. |
-| 10 | stablecoin-depeg | Depeg mean-reversion (buy panic, sell repeg) — event TRADING | P3 | queued | Episodic; verify known events + frequency. Tail-risk honest (USTC went to 0). |
+| 10 | stablecoin-depeg | Depeg mean-reversion (buy panic, sell repeg) — event TRADING | P3 | **NOT-A-STRATEGY** | Iter 13 desk note: ~1 event/2-3yr, n too small, fatal tail if wrong peg. Kept as opportunistic playbook rule in verdicts/oi-and-depeg.md |
 | 12 | intraday-tsmom | Intraday TSMOM: first-30min return predicts last-30min return on HIGH-VOL days only (Shen/Urquhart/Wang, Financial Review) | P3 | **DEAD** | Iter 10 (hourly adaptation): all cells negative both periods. verdicts/leadlag-intraday.md |
 | 11 | rsi-meanrev | Short-timeframe RSI/Bollinger mean reversion on liquid perps (5m-4h bars) | P2 | **DEAD** | Academic sweep: StratProof forward test on REAL Binance fees — 6/22 strategies survived, ALL were RSI mean-reversion; every trend variant lost. 10-day sample too short → backtest 2023→now, IS/OOS, taker fees. |
 
@@ -151,6 +151,14 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   **stablecoin-depeg** desk-note verdict (episodic, small-n, likely
   UNVERIFIABLE tonight), then queue is empty → sweep round 2 (novel directional
   ideas only) or throttle to heartbeats if nothing new.
+- **Iter 13 — 20:56–21:05 UTC (04:56 MYT):** cleanup pass done: oi-extreme →
+  UNVERIFIABLE-DATA (Bybit still blocked; OKX Rubik 180d; Binance 30d);
+  stablecoin-depeg → NOT-A-STRATEGY (desk note + playbook rule). Queue now
+  fully resolved. Final gap-sweep sonnet agent spawned (novel directional
+  mechanisms only, told what's already dead). NEXT: iter 14 = triage gap-sweep
+  when it lands; if nothing new testable → write **MORNING.md** consolidated
+  brief (the answer to "which strategy do we proceed with"), final push, then
+  throttle heartbeats (~1800s) with sampler checks until owner wakes.
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =
