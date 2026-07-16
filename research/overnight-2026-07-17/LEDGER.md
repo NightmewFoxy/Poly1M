@@ -19,7 +19,7 @@ descoped — see PROTOCOL amendment.**
 | 3 | xsmom-alts | Cross-sectional momentum: long top-quintile / short bottom-quintile alt perps, weekly rotate | P1 | **VIABLE** | VERIFIED iter 4 → NEW LEADER: ensemble +26.1%/yr net OOS clean-universe, Sharpe 1.07, maxDD −19.6%. verdicts/xsmom-alts.md |
 | 4 | liq-wick-reversion | Buy violent liquidation dumps / sell squeezes intraday on majors (mean reversion after forced flow) | P2 | queued | Data: 1m klines from data.binance.vision bulk zips (BTC/ETH/SOL 2024→now). Define wick/velocity trigger IS, OOS test. Fees hurt at this frequency — taker both ways. |
 | 5 | seasonality | Hour-of-day / day-of-week / session effects on BTC/ETH perps (long/short by clock) | P2 | **DEAD (net)** | Hourly candles 2021→now. Strict multiple-hypothesis discipline: discover IS ≤2024, confirm OOS 2025→now. Practitioner sweep: "Monday Asia open" momentum claim 28%/yr, 60% win/103 trades, single-sourced vendor-adjacent — test that specific hypothesis too. |
-| 6 | pairs-statarb | Long/short pairs on perps (ETHBTC ratio MR; cointegrated alt pairs) | P2 | queued | In scope (it IS long-short futures). Cointegration IS 2022-2024, OOS 2025→now, fees both legs. Practitioner sweep: low-tier paper claims Sharpe 1.58-2.45 on BTC-ETH pair — replicate, expect decay. |
+| 6 | pairs-statarb | Long/short pairs on perps (ETHBTC ratio MR; cointegrated alt pairs) | P2 | **DEAD** | In scope (it IS long-short futures). Cointegration IS 2022-2024, OOS 2025→now, fees both legs. Practitioner sweep: low-tier paper claims Sharpe 1.58-2.45 on BTC-ETH pair — replicate, expect decay. |
 | 7 | btc-leads-alts | Lead-lag: BTC big move → alts follow (long/short alts on BTC impulse) | P2 | queued | Hourly/15m candles BTC + top alts. Test signal lag structure IS, OOS confirm. Retail latency OK if effect persists hours. |
 | 8 | oi-extreme | Open-interest spikes / long-short-ratio extremes as reversal or continuation signal | P3 | queued | Bybit has OI history endpoint (verify depth); combine with price. Mark UNVERIFIABLE-DATA if history too shallow. |
 | 9 | event-drift | Pre-FOMC drift on BTC: long ~24h before FOMC statement, flat at announcement | P2 | **DEAD** | UPGRADED by directional sweep: BTC +0.96% avg day-before-FOMC claim, echoes Lucca-Moench equity drift. FOMC ONLY (CPI debunked — no consistent effect). ~20 events/yr: small-sample honesty required. Data: hourly candles + FOMC dates 2022-2026. |
@@ -129,3 +129,13 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   **pairs-statarb** from cached OKX dailies: ETHBTC ratio z-score MR + top
   cointegrated old-guard pairs; IS 2022-2023 fit (lookback, entry/exit z),
   OOS 2024→now, fees both legs. Expect decay per academic sweep; verify.
+- **Iter 9 — 19:37–19:50 UTC (03:37 MYT):** pairs-statarb VERIFIED → **DEAD**
+  (IS Sharpe 2.35 → OOS −17.6%/yr, all 5 frozen pairs negative; ETHBTC ≈0).
+  Emerging meta-finding: 2024-2026 = MOMENTUM regime; every mean-reversion
+  family fails, momentum families survive. NEXT: iter 10 = **btc-leads-alts**
+  (cached 1H: BTC 4h/24h impulse → ETH/SOL next-hours follow; IS 2022-2024 /
+  OOS 2025→now) + **intraday-tsmom hourly adaptation** (first-hour → rest-of-day,
+  vol-conditional) in the same iteration if fast. Then: liq-wick (probe
+  data.binance.vision for 1m zips), xsmom deepening (rebalance timing 20:00 UTC,
+  long-only variant, mid-guard universe), stablecoin-depeg desk check,
+  oi-extreme (re-probe Bybit).
