@@ -1,11 +1,14 @@
 # LEADERBOARD — overnight crypto strategy hunt (2026-07-17)
 
 **CURRENT BEST (in-scope, futures long/short): xsmom-alts — cross-sectional alt
-momentum, selection-free ensemble (long top-quintile / short bottom-quintile
-weekly, lookbacks 7/14/28/60 equal-weight). VIABLE: +26.1%/yr net OOS on the
-survivorship-CLEAN universe, Sharpe 1.07, maxDD −19.6%, worst 30d −9.4%;
-~$0.71/day @ $1k, ~$3.57/day @ $5k at 1x (2x ≈ double, with −40% DD risk).
-Sign robust in every cell of both universes; fees included; weekly ~20min ops.**
+momentum, selection-free ensemble (long top-quintile / short bottom-quintile of
+a 15-perp universe weekly, lookbacks 7/14/28/60 equal-weight). VIABLE and
+deep-dived: honest OOS range +26–38%/yr net at 1x (clean-11 vs mid-15 universe),
+Sharpe 1.1–1.3, maxDD −16–20%; ALL 7 rebalance phases positive (mean +24%);
+positive EVERY year incl. +20%/yr in 2025 and 2026H1 (forward expectation
+~+20–30%/yr). $1k ⇒ ~$0.55–0.80/day; $5k ⇒ ~$2.70–4.10/day; 2x leverage doubles
+P&L and DD. Short leg is the hedge (long-only = −67% maxDD; short-only loses).
+Fees included; ~20min/week ops; execute rebalances ~20:00 UTC.**
 
 Ranked, verified-only. Every entry must have a `verdicts/<slug>.md` behind it.
 Owner scope (02:50 MYT): futures long/short trading only — yield/arb entries are

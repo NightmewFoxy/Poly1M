@@ -134,6 +134,14 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   execution window per seasonality finding). Then iter 12 = liq-wick (probe
   data.binance.vision 1m zips); iter 13 = oi-extreme re-probe Bybit +
   stablecoin-depeg desk note.
+- **Iter 11 — 20:05–20:20 UTC (04:05 MYT):** xsmom DEEP-DIVE done (verdict file
+  updated): mid-15 universe +38.0%/yr Sh 1.31 maxDD −15.9%; all 7 phases
+  positive (mean +23.7%); per-year +71/+20/+20%; long-only = −67% maxDD trap,
+  short-only loses (shorts are the hedge); turnover 1.04x/wk (fee drag 3.8%/yr).
+  Forward expectation quoted: +20–30%/yr at 1x. LEADERBOARD refreshed. NEXT:
+  iter 12 = **liq-wick-reversion**: probe data.binance.vision for 1m kline zips
+  (BTC/ETH/SOL 2024→now); if blocked, OKX 1m too slow → UNVERIFIABLE-DATA.
+  Then iter 13 = oi-extreme (re-probe Bybit) + stablecoin-depeg desk note.
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =
