@@ -177,6 +177,9 @@ likely decayed — conflicting with practitioner sweep's Sharpe claim; verify, e
   complete: 14 families verified, MORNING.md final. Loop enters THROTTLE mode
   (1800s heartbeats: sampler check, refresh basket if stale >6h, otherwise
   idle) until the owner interrupts.
+- **LOOP ENDED by owner (morning interrupt).** Samplers stopped cleanly
+  (~5,300 xex rows + ~1,460 funding rows recorded). Final state: 14 families
+  verified, winner = xsmom (see MORNING.md). Night complete.
 - **Iter 8 — 19:33–19:45 UTC (03:33 MYT):** event-drift (pre-FOMC) VERIFIED →
   **DEAD** (t≈1.1 noise over 36 events; sign reversed 2024→now; ≤+2.5%/yr best
   case). 2026 FOMC dates verified vs Fed calendar. NEXT: iter 9 =
