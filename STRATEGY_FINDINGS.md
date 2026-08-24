@@ -187,3 +187,24 @@ calibration, not validation.
   params silently return nothing.
 - `are_orders_scoring` gives per-order reward eligibility straight from the
   CLOB — use it on day one of any LP run instead of trusting the model.
+
+## Addendum 2026-08-24: RSI regular-divergence + confluences (YT K7vFNn7fZ7Y) on BTC 15m
+
+Same YouTuber as the 2026-08-21 hidden-divergence test ("The Moving Average").
+This video: regular divergence on 15m + confluence stack (RSI<50 line cross,
+break of structure, below 21-SMMA, optional three-line-strike trigger), SL at
+divergence extreme, 1.5-2R targets. Backtest: `backtest_regdiv15m.py`,
+BTCUSDT 15m, 2y (2024-08 -> 2026-08), no-lookahead fractal pivots.
+
+- Naive divergence-only (what he warns against): n=1775, -0.16%/trade net. Dead.
+- With confluences (tier B): n=439, win 42%, **gross +0.12%/trade** — the
+  filter genuinely adds signal, robust across long/short (both +), both years
+  (+0.17% yr1, +0.08% yr2 — decaying), and pivot/window params (+0.03..+0.15%).
+- But net of 0.075%/side taker fees: **-0.03%/trade, -12% total. DEAD.**
+  Even futures maker+taker (~0.06% RT) barely breaks even on the yr2 edge,
+  before slippage. Three-line-strike trigger (tier C) doesn't rescue it.
+
+Verdict: the video's core claim ("raw divergence loses, confluences fix it")
+is directionally right — it's the only retail-TA template tested so far with
+a robust positive gross edge — but the edge (~0.1%/trade) is below retail
+round-trip costs. Sub-cost anomaly, not a strategy. No bot.
