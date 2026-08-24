@@ -225,3 +225,23 @@ inside noise (full-sample t~2.6, borderline), before slippage/queue reality.
 
 Verdict unchanged: paper-positive at maker fees on exactly one timeframe with
 a decaying, borderline-significant edge = not fundable. No bot.
+
+### Follow-up 2026-08-24 (2): most profitable timeframe + settings (regdiv tier B)
+
+Full sweep 5m..4h + settings grid (order type, TP 1.5/2/3R, SL pad, BE-move),
+net of Binance futures fees (maker 0.018%, taker 0.045%), maker fills modeled
+as limit-at-close filled only when a later bar trades through it.
+
+Winner: **30m, TP 2R, maker limit entry ~10bp beyond close, no BE-move**:
+BTC n=197, +0.55%/trade net, +107%/2y, t=2.3. Passes ETH out-of-sample
+(+1.19%/trade, +223%, t=3.3) — the 15m top settings FAIL on ETH (-0.01%).
+Robustness: BTC and ETH positive in BOTH years (decaying: BTC +0.66% yr1 ->
++0.38% yr2; ETH +1.93% -> +0.64%). SOL is firmly negative (-0.37%/trade,
+26% win) — the edge is majors-only, not universal. BE-move at 1R destroys
+every config (worst rows of the grid). TP 3R also bad.
+
+Assessment: this is the strongest result of the whole retail-TA research
+program — two assets, both years, OOS-confirmed, net of realistic maker fees.
+Still fragile: single timeframe band, decaying edge, t-stats only 1.2-1.7 on
+the yr2 halves, and the maker-fill model ignores queue position. If anything
+ever graduates to a paper-trading bot from this program, it's this config.
