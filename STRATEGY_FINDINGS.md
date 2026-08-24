@@ -208,3 +208,20 @@ Verdict: the video's core claim ("raw divergence loses, confluences fix it")
 is directionally right — it's the only retail-TA template tested so far with
 a robust positive gross edge — but the edge (~0.1%/trade) is below retail
 round-trip costs. Sub-cost anomaly, not a strategy. No bot.
+
+### Follow-up 2026-08-24: maker fees + timeframe sweep (regdiv tier B)
+
+**Timeframe sweep (gross, TP 1.5R):** 5m -0.02%/trade, 15m +0.12%, 30m +0.14%,
+1h -0.47%, 4h +0.01%. The edge lives ONLY in the 15m/30m band — neighbors are
+flat-to-negative, which smells like band-specific luck rather than a general
+phenomenon. 1h is outright bad.
+
+**Maker-entry sim (15m, Binance futures fees: 0.018% maker / 0.045% taker-SL,
+limit at signal close, filled only when a later bar trades through it):**
+100% of signals fill at 0bp offset; net +0.070%/trade, +31% total over 2y
+(n=438). Wider offsets don't help. So maker execution DOES flip the sign on
+paper — but the year-2 gross edge (+0.08%) nets to ~+0.03%/trade at these fees,
+inside noise (full-sample t~2.6, borderline), before slippage/queue reality.
+
+Verdict unchanged: paper-positive at maker fees on exactly one timeframe with
+a decaying, borderline-significant edge = not fundable. No bot.
