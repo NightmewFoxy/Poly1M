@@ -332,3 +332,31 @@ vs BTC+ETH (+77%/2y): higher total, but ETH is the decaying leg (+0.86% ->
 +0.19%/tr) while BTC+sess is the stable one. BTC-only trades stability for
 ~half the backtest return; BTC-vs-ETH correlation (~0.8) means the pair adds
 little diversification - ETH's contribution is return, not smoothing.
+
+### Follow-up 2026-08-26 (3): owner's remix — divergence + 21SMMA cross only (no BOS)
+
+Rules as specified: RSI(14) regular divergence sets direction; enter when a
+candle CLOSES across the SMMA21 in that direction (within 40 bars); SL at
+divergence extreme; TP 2R; incumbent execution (maker 10bp/TTL4). BTC only.
+
+TF sweep (BTC): 5m negative; 15m ~zero; **30m the winner again**:
++0.117%/tr net, n=353 (14.7/mo - 2.2x the incumbent's trade count), positive
+BOTH years (+0.128/+0.104); 1h inconsistent; 4h +1.41%/tr but n=44 with yr2
+negative = small-sample yr1 spike, rejected. The "cross" event beats the
+"already-beyond" state version everywhere.
+
+1000 USDT, BTC-only, 100% notional 1x: 1000 -> 1,376 (+37.6%/2y, +17.3%/yr),
+maxDD 18.3% - same money as the full-confluence BTC-only config with double
+the trades.
+
+Robustness caveats (why it does NOT replace the incumbent):
+- **Fails ETH out-of-sample** (-0.004%/tr; with sess filter -0.170%). The
+  BOS confluence is what makes the edge transfer across assets.
+- **Session filter FLIPS it negative on BTC** (1000->991) - opposite
+  interaction vs the incumbent config = fragility flag on both.
+- Per-trade edge less than half the confluence version; shorts negative in
+  the sess-filtered split.
+Verdict: legitimate BTC-only cousin with 2x activity and matching total
+return, but strictly less robust. Suitable as a paper-bot B-strategy at
+most; his own "wait for the structure break" warning is what the ETH failure
+empirically confirms.
