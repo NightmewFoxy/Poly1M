@@ -290,3 +290,29 @@ gate to `paper_regdiv.py` (skip signal bars outside 07:00-21:00 UTC; manage
 open positions unchanged). One-line change, cuts the drawdown-heavy Asia-hours
 trades that made BTC yr2 negative. Owner to approve before touching the live
 paper bot.
+
+### Follow-up 2026-08-26: "more trades" study (owner request)
+
+Four frequency-scaling paths tested, each mapped to his own videos:
+1. **More pairs** (his multi-chart watchlist): sess-regdiv 30m on 7 more
+   majors — BNB/DOGE/AVAX/LINK ~zero, XRP −0.41%/tr, ADA −0.61%, LTC +0.27%
+   (t=0.6, yr2 ~0 = noise). With SOL already negative: **the edge exists on
+   BTC+ETH only.** Universe expansion adds losing trades, not volume. DEAD.
+2. **Lower TF** (his 15m/5m scalp versions): 15m ETH negative w/ session
+   filter. DEAD (re-confirmed).
+3. **Fewer confluences** (his "pick 3-4 confluences"): dropping BOS doubles
+   signals and kills the edge (BTC +0.03%, ETH −0.05%); RSI-50 and SMMA21
+   turn out ~redundant once BOS holds — **BOS is the entire filter**, which
+   is literally what his video preaches. DEAD.
+4. **Overlapping signals** (the bot currently drops signals while in a
+   position): the only honest path. BTC 159→337 trades/2y at BETTER
+   +0.31%/tr (both yrs +); ETH 175→342 at diluted +0.12%/tr. Portfolio sim
+   with his 1%-risk-per-trade sizing, max 3 concurrent/symbol: 27 trades/mo
+   (vs 14), +23.8%/yr, maxDD 18.3%, peak notional 2.45x. BUT at constant
+   risk%, extra concurrency does NOT raise return (10.1→10.6%/yr) while
+   doubling DD (5.2→11.7%) — overlap adds turnover, not edge-per-risk.
+
+Verdict: trade count can be ~doubled via concurrent-position slots without
+degrading per-trade edge on BTC (ETH dilutes), but the profit lever is risk
+per trade, not trade count. The channel's own advice ("Trade Less Win More",
+"1 Trade a Day") is directionally correct for this edge.
