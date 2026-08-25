@@ -316,3 +316,19 @@ Verdict: trade count can be ~doubled via concurrent-position slots without
 degrading per-trade edge on BTC (ETH dilutes), but the profit lever is risk
 per trade, not trade count. The channel's own advice ("Trade Less Win More",
 "1 Trade a Day") is directionally correct for this edge.
+
+### Follow-up 2026-08-26 (2): BTC-only variant (owner question)
+
+Sess-filtered regdiv 30m, BTC alone, 1000 USDT, 2y:
+- Non-overlap, 100% notional/trade (1x): n=159 (6.6/mo), 1000->1380
+  (+17.5%/yr), maxDD 23.4%. Notably EVEN across years (+17.0% yr1 / +17.9%
+  yr2) - the only config tested with no visible decay.
+- Overlap conc3 @ 1% risk/trade: n=321 (13.4/mo), 1000->1392, maxDD 14.7%,
+  peak notional 2.4x. Same return as A, lower DD, twice the trades.
+- Overlap conc3 @ 1.5% risk: 1000->1685 (+30%/yr), DD 18.6%, peak 3.0x -
+  approaching the leverage zone where a -7% worst-trade cluster hurts.
+
+vs BTC+ETH (+77%/2y): higher total, but ETH is the decaying leg (+0.86% ->
++0.19%/tr) while BTC+sess is the stable one. BTC-only trades stability for
+~half the backtest return; BTC-vs-ETH correlation (~0.8) means the pair adds
+little diversification - ETH's contribution is return, not smoothing.
