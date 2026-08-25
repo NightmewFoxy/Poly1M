@@ -360,3 +360,35 @@ Verdict: legitimate BTC-only cousin with 2x activity and matching total
 return, but strictly less robust. Suitable as a paper-bot B-strategy at
 most; his own "wait for the structure break" warning is what the ETH failure
 empirically confirms.
+
+### Follow-up 2026-08-26 (4): owner's touch-21SMMA rule — hidden divergence comes back to life
+
+Owner's rule from live-chart discussion: divergence sets direction, enter when
+price TOUCHES the SMMA21 (stop/limit resting AT the prev-bar MA level, not a
+close-through). SL divergence extreme, TP 2R, entry charged as TAKER
+(conservative - the touch could rest as a maker limit).
+
+Surprise result: with the touch entry, REGULAR divergence goes flat but
+HIDDEN divergence - dead in every close-entry test - becomes the program's
+best performer. Mechanism: hidden div = pullback within a trend, and the
+touch entry sells/buys the retest OF the 21MA at a better price; it is
+"trade the 21-SMMA pullback in an established trend", with the divergence
+as the trend qualifier.
+
+BTC 15m: +0.27%/tr (yr1 +0.50/yr2 +0.12); ETH 15m OOS: +0.56%/tr
+(+0.74/+0.39) - **4/4 asset-years positive, the only config besides the
+incumbent to pass**. Long AND short positive on both assets. Sess 07-21
+helps BTC (+0.32) and is neutral on ETH. 30m is BTC-yr1-driven; 5m BTC
+negative (band-edge fragility, familiar smell); SOL incoherent (unchanged).
+
+Portfolio BTC+ETH 15m, 50% notional each, 1x: n=474 (19.8/mo - the "more
+trades" wish granted), 1000 -> 2,297 (+130%/2y; yr1 +79%, yr2 +28%),
+**maxDD 33%** (double the incumbent's 17%).
+
+Caveats before anyone falls in love: this is the Nth config iterated against
+the SAME 2y of data in one session - accumulated researcher-degrees-of-
+freedom risk is real even with the OOS asset; the yr2 drawdown is 33%; and
+the band-edge (5m BTC negative) mirrors the fragility pattern of every
+prior config. Verdict: strongest paper candidate of the whole program after
+the incumbent; belongs in the paper bot as a tagged B-strategy so live data
+can adjudicate. NOT a replacement for the incumbent yet.
