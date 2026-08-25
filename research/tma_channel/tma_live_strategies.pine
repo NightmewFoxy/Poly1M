@@ -1,0 +1,219 @@
+//@version=6
+// TMA LIVE strategies visualizer — mirrors paper_tma.py EXACTLY.
+//   LOS  (aqua/teal):   line-of-sight hidden divergences — any two 2/2 local
+//        extremes whose connecting line is unpierced on BOTH price and RSI.
+//        The paper bot trades this on 15m.
+//   SWING (orange):     prominent adjacent swings — RSI fractal 8/8 pivots,
+//        adjacent pair, price extreme +/-2 bars. Bot trades this on 30m.
+// Entry for both: first touch of the previous bar's SMMA21 within 40 bars of
+// signal confirm (next-bar open if already beyond the MA). SL = far divergence
+// anchor (dashed red stub), TP = 2R (dashed lime stub). Labels tagged LOS/SWG.
+// Use the timeframe matching the bot's tag: LOS fills -> 15m, SWING -> 30m.
+
+indicator("TMA Live Strategies", overlay=false, max_lines_count=500, max_labels_count=500, max_bars_back=500)
+
+showLOS   = input.bool(true, "Show LOS divergences (15m strategy)")
+showSWG   = input.bool(true, "Show SWING divergences (30m strategy)")
+showTr    = input.bool(true, "Show entries / SL / TP")
+maxGap    = input.int(100, "Max bars between anchors")
+entryWin  = input.int(40,  "Entry window (bars)")
+tpR       = input.float(2.0, "TP (R)")
+
+recentOnly = last_bar_index - bar_index < 4000
+
+rsiV = ta.rsi(close, 14)
+ma21 = ta.rma(close, 21)
+
+plot(rsiV, "RSI 14", color=color.yellow)
+hline(50, color=color.new(color.gray, 50))
+plot(ma21, "SMMA 21", color=color.orange, force_overlay=true)
+
+// ---------- pending-entry machinery (shared) ----------
+var pdDir = array.new<int>()
+var pdExt = array.new<float>()
+var pdBar = array.new<int>()
+var pdImm = array.new<int>()
+var pdTag = array.new<string>()
+
+queueTrade(int dir, float ext, string tag) =>
+    array.push(pdDir, dir)
+    array.push(pdExt, ext)
+    array.push(pdBar, bar_index)
+    array.push(pdImm, (dir < 0 ? close < ma21 : close > ma21) ? 1 : 0)
+    array.push(pdTag, tag)
+
+drawDiv(int b1, float p1, float r1, int b2, float p2, float r2, color col) =>
+    line.new(b1, p1, b2, p2, xloc=xloc.bar_index, color=col, width=2, force_overlay=true)
+    line.new(b1, r1, b2, r2, xloc=xloc.bar_index, color=col, width=2)
+
+// ---------- LOS detector (2/2 extremes, price+RSI lines clean) ----------
+phL = ta.pivothigh(high, 2, 2)
+plL = ta.pivotlow(low, 2, 2)
+
+losClearHigh(int p, int j) =>
+    // no high and no RSI pokes above the lines between confirmed pivots p..j
+    ok = true
+    float sp = (high[bar_index - j] - high[bar_index - p]) / (j - p)
+    float sr = (rsiV[bar_index - j] - rsiV[bar_index - p]) / (j - p)
+    for k = p + 1 to j - 1
+        float lineP = high[bar_index - p] + sp * (k - p)
+        float lineR = rsiV[bar_index - p] + sr * (k - p)
+        if high[bar_index - k] > lineP or rsiV[bar_index - k] > lineR
+            ok := false
+            break
+    ok
+
+losClearLow(int p, int j) =>
+    ok = true
+    float sp = (low[bar_index - j] - low[bar_index - p]) / (j - p)
+    float sr = (rsiV[bar_index - j] - rsiV[bar_index - p]) / (j - p)
+    for k = p + 1 to j - 1
+        float lineP = low[bar_index - p] + sp * (k - p)
+        float lineR = rsiV[bar_index - p] + sr * (k - p)
+        if low[bar_index - k] < lineP or rsiV[bar_index - k] < lineR
+            ok := false
+            break
+    ok
+
+var lhBar = array.new<int>()   // confirmed 2/2 local highs
+var llBar = array.new<int>()
+
+if not na(phL) and showLOS and recentOnly
+    j = bar_index - 2
+    if array.size(lhBar) > 0
+        tries = 0
+        for k = array.size(lhBar) - 1 to 0
+            p = array.get(lhBar, k)
+            tries += 1
+            if j - p > maxGap or tries > 12
+                break
+            if losClearHigh(p, j)
+                hp = high[bar_index - p]
+                hj = high[bar_index - j]
+                rp = rsiV[bar_index - p]
+                rj = rsiV[bar_index - j]
+                if hj < hp and rj > rp   // hidden bearish
+                    drawDiv(p, hp, rp, j, hj, rj, color.aqua)
+                    if showTr
+                        queueTrade(-1, math.max(hp, hj), "LOS")
+                break
+    array.push(lhBar, j)
+    if array.size(lhBar) > 60
+        array.shift(lhBar)
+
+if not na(plL) and showLOS and recentOnly
+    j = bar_index - 2
+    if array.size(llBar) > 0
+        tries = 0
+        for k = array.size(llBar) - 1 to 0
+            p = array.get(llBar, k)
+            tries += 1
+            if j - p > maxGap or tries > 12
+                break
+            if losClearLow(p, j)
+                lp = low[bar_index - p]
+                lj = low[bar_index - j]
+                rp = rsiV[bar_index - p]
+                rj = rsiV[bar_index - j]
+                if lj > lp and rj < rp   // hidden bullish
+                    drawDiv(p, lp, rp, j, lj, rj, color.teal)
+                    if showTr
+                        queueTrade(1, math.min(lp, lj), "LOS")
+                break
+    array.push(llBar, j)
+    if array.size(llBar) > 60
+        array.shift(llBar)
+
+// ---------- SWING detector (RSI fractal 8/8, adjacent pair) ----------
+rphS = ta.pivothigh(rsiV, 8, 8)
+rplS = ta.pivotlow(rsiV, 8, 8)
+
+priceHiAround(int j) =>
+    float m = high[bar_index - j]
+    for k = math.max(j - 2, 0) to j + 2
+        if bar_index - k >= 0
+            m := math.max(m, high[bar_index - k])
+    m
+
+priceLoAround(int j) =>
+    float m = low[bar_index - j]
+    for k = math.max(j - 2, 0) to j + 2
+        if bar_index - k >= 0
+            m := math.min(m, low[bar_index - k])
+    m
+
+var shBar = array.new<int>()
+var shR   = array.new<float>()
+var slBar = array.new<int>()
+var slR   = array.new<float>()
+
+if not na(rphS) and showSWG and recentOnly
+    j = bar_index - 8
+    if array.size(shBar) > 0
+        p  = array.get(shBar, array.size(shBar) - 1)   // adjacent previous RSI swing high
+        pr = array.get(shR, array.size(shR) - 1)
+        if j - p <= maxGap
+            hp = priceHiAround(p)
+            hj = priceHiAround(j)
+            if hj < hp and rphS > pr   // hidden bearish
+                drawDiv(p, hp, pr, j, hj, rphS, color.orange)
+                if showTr
+                    queueTrade(-1, math.max(hp, hj), "SWG")
+    array.push(shBar, j)
+    array.push(shR, rphS)
+    if array.size(shBar) > 20
+        array.shift(shBar)
+        array.shift(shR)
+
+if not na(rplS) and showSWG and recentOnly
+    j = bar_index - 8
+    if array.size(slBar) > 0
+        p  = array.get(slBar, array.size(slBar) - 1)
+        pr = array.get(slR, array.size(slR) - 1)
+        if j - p <= maxGap
+            lp = priceLoAround(p)
+            lj = priceLoAround(j)
+            if lj > lp and rplS < pr   // hidden bullish
+                drawDiv(p, lp, pr, j, lj, rplS, color.new(color.orange, 20))
+                if showTr
+                    queueTrade(1, math.min(lp, lj), "SWG")
+    array.push(slBar, j)
+    array.push(slR, rplS)
+    if array.size(slBar) > 20
+        array.shift(slBar)
+        array.shift(slR)
+
+// ---------- process pending entries (touch of prev-bar SMMA21) ----------
+if array.size(pdDir) > 0
+    k = 0
+    while k < array.size(pdDir)
+        dir = array.get(pdDir, k)
+        ext = array.get(pdExt, k)
+        cb  = array.get(pdBar, k)
+        imm = array.get(pdImm, k)
+        tag = array.get(pdTag, k)
+        entry = float(na)
+        if bar_index > cb and imm == 1
+            entry := open
+        else if bar_index > cb and bar_index - cb <= entryWin
+            lvl = ma21[1]
+            if dir < 0 and high >= lvl and low <= lvl
+                entry := open > lvl ? open : lvl
+            if dir > 0 and low <= lvl and high >= lvl
+                entry := open < lvl ? open : lvl
+        expired = bar_index - cb > entryWin
+        if not na(entry)
+            risk = math.abs(entry - ext)
+            if risk / entry >= 0.0008 and ((dir > 0) == (entry > ext))
+                tp = entry + dir * tpR * risk
+                label.new(bar_index, entry, tag + (dir < 0 ? " SHORT " : " LONG ") + str.tostring(entry, format.mintick), style=dir < 0 ? label.style_label_down : label.style_label_up, color=dir < 0 ? color.maroon : color.navy, textcolor=color.white, size=size.small, force_overlay=true)
+                line.new(bar_index, ext, bar_index + 20, ext, color=color.red, style=line.style_dashed, force_overlay=true)
+                line.new(bar_index, tp,  bar_index + 20, tp,  color=color.lime, style=line.style_dashed, force_overlay=true)
+        if not na(entry) or expired
+            array.remove(pdDir, k)
+            array.remove(pdExt, k)
+            array.remove(pdBar, k)
+            array.remove(pdImm, k)
+            array.remove(pdTag, k)
+        else
+            k += 1

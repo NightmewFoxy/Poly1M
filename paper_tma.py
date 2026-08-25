@@ -47,9 +47,14 @@ POLL_SEC = 60
 MYT_OFFSET = 8 * 3600
 
 STRATS = {
-    "LOS-15m": {"interval": "15m", "bar_ms": 15 * 60 * 1000},
-    "SWING-30m": {"interval": "30m", "bar_ms": 30 * 60 * 1000},
+    "LOS-15m": {"interval": "15m", "bar_ms": 15 * 60 * 1000, "tv_iv": "15"},
+    "SWING-30m": {"interval": "30m", "bar_ms": 30 * 60 * 1000, "tv_iv": "30"},
 }
+TV_LAYOUT = "https://www.tradingview.com/chart/nhgPREcq/"
+
+
+def tv_link(strat, sym):
+    return f"{TV_LAYOUT}?symbol=BINANCE%3A{sym}&interval={STRATS[strat]['tv_iv']}"
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 STATE_FILE = os.path.join(DATA_DIR, "paper_tma_state.json")
@@ -296,9 +301,11 @@ def close_trade(st, key, px, reason, exit_fee):
     slot["pos"] = None
     side = "SHORT" if d < 0 else "LONG"
     emoji = "✅" if pnl > 0 else "❌"
+    strat_name, sym_name = key.split("|")
     telegram(f"{emoji} TMA CLOSE [{key}] {side} @ {px:.2f} ({reason})\n"
              f"PnL {pnl:+.2f} USDT ({ret * 100:+.2f}%) | equity {st['equity']:.2f}\n"
-             f"{anchors_str(pos['anchors'])}")
+             f"{anchors_str(pos['anchors'])}\n"
+             f"📈 chart: {tv_link(strat_name, sym_name)}")
     log_event({"e": "close", "key": key, "px": px, "reason": reason,
                "pnl": pnl, "ret": ret, "equity": st["equity"]})
 
@@ -372,7 +379,8 @@ def process_slot(st, strat, sym):
                 telegram(f"🎯 TMA FILL [{key}] {side} @ {entry:.2f} ({fee_kind})\n"
                          f"SL {pd['sl']:.2f} | TP {tp:.2f} (2R) | "
                          f"notional {notional:.0f} USDT\n"
-                         f"{anchors_str(pd['anchors'])}")
+                         f"{anchors_str(pd['anchors'])}\n"
+                         f"📈 chart: {tv_link(strat, sym)}")
                 log_event({"e": "fill", "key": key, "dir": d, "entry": entry,
                            "sl": pd["sl"], "tp": tp, "notional": notional,
                            "anchors": pd["anchors"]})
