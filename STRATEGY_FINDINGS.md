@@ -433,3 +433,26 @@ Conclusions:
    really "backtested one formalization" - and raises the data-mining
    caution on our positive results another notch. The paper bot remains the
    arbiter.
+
+### Follow-up 2026-08-26 (6): the photo-method (prominent adjacent swings) — FINAL BEST CONFIG
+
+Owner pinned Arty's method to the canonical frame (GER40 1h, all four
+divergence types drawn between ADJACENT PROMINENT swings). With swing width
+raised to match that prominence (fractal 8 bars each side on the RSI series,
+adjacent pairs, gap<=100), his method + the owner's touch-21SMMA entry at
+30m becomes the best result of the entire program:
+
+- BTC 30m: +0.52%/tr net, n=181, 48% win, yr1 +0.33/yr2 +0.70, t=2.07
+- ETH 30m: +0.73%/tr net, n=166, 42% win, yr1 +1.20/yr2 +0.34, t=1.55
+- 4/4 asset-years positive; LONGS AND SHORTS positive on both assets
+  (BTC 49.5%/46.7% win) - first config to pass every split.
+- Portfolio (50% notional each, 1x): 1000 -> 2,646/2y (+165%), yr1 +71% /
+  yr2 +55% (least decay in the program), maxDD 22.4%, 14.5 trades/mo.
+- Worst single trades -12.1%/-9.5% at 1x: lr8 swings put SLs FAR away;
+  fixed-notional sizing is inappropriate - size by risk (e.g. 0.5-1% equity
+  per trade) and cap notional.
+
+Fragility flags (unchanged in spirit): 6th in-sample iteration - mining
+risk is at its highest; lr=5 neighbour at 30m is weak on BTC (~+0.03%/tr);
+BTC 15m lr8 yr1 is flat. The parameter plateau is not smooth. Paper trading
+remains the arbiter before any capital.
