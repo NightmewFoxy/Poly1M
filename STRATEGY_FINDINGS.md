@@ -456,3 +456,30 @@ Fragility flags (unchanged in spirit): 6th in-sample iteration - mining
 risk is at its highest; lr=5 neighbour at 30m is weak on BTC (~+0.03%/tr);
 BTC 15m lr8 yr1 is flat. The parameter plateau is not smooth. Paper trading
 remains the arbiter before any capital.
+
+### Follow-up 2026-08-26 (7): owner's line-of-sight divergence definition
+
+Owner pinned the actual selection rule: no bar-count at all - ANY two swings
+qualify "as long as there's nothing blocking the full divergence line".
+Coded exactly (los_div.py): anchors = 2/2 local extremes; pair = most recent
+previous extreme whose straight connecting line is unpierced (tested price-
+line-only and price+RSI-lines-both-clean, the photo's version); hidden div +
+touch-21SMMA entry, SL far anchor, TP 2R, entry charged taker (conservative;
+the resting limit at the MA would mostly earn maker, ~+0.027%/tr).
+
+Result: positive in 7/8 asset-TF-year cells, no blow-up year anywhere, and
+the frequency matches the owner's eyeball (~2,700 raw divergences/asset on
+15m = 3.7/day). Per-trade edge is THIN (+0.03..+0.29%/tr): clean-line pairs
+include many small nearby swings -> tight SLs, churn, fees bite.
+Portfolios (BTC+ETH, 50% notional each, 1x, one position per asset):
+- 30m: n=669 (27.9 tr/mo), 1000 -> 1,588/2y, maxDD 22.6% (yr1 +14.7%, yr2 +38.4%)
+- 15m: n=1449 (60.4 tr/mo), 1000 -> 1,696/2y, maxDD 24.0% (yr1 +46.2%, yr2 +16.0%)
+
+Detector-formalization league table (hidden+touch, BTC+ETH, 2y):
+1. lr8 prominent adjacent swings, 30m: 1000->2,646, 14.5 tr/mo - best money
+2. LOS (owner's rule), 30m/15m: 1000->1,588/1,696, 28-60 tr/mo - most
+   faithful to the videos, most cells positive, thinnest per-trade edge
+3. price-fractal skip-pair (mine), 15m: 1000->2,297 but maxDD 33%
+4. small-swing adjacent (lr3): DEAD
+All four are "the same strategy" as taught on YouTube. The formalization IS
+the strategy.
