@@ -1,0 +1,29 @@
+# The 1-Minute Fibonacci Scalping Strategy (That Actually Works)
+- id: AlsXNhTm4AA | views: 716000 | length: 429s
+- market(s) shown: **EURUSD** ("here you can see EuroUSD, the most manipulated pair of all time" [2:51])
+- timeframe(s) taught: **1m only** — "only trade on the one minute chart" [2:31]; explicitly "make sure that your chart's on the one minute time frame by selecting 1M on the top menu" [3:00]
+
+## Mechanical rules (only what the video actually states)
+- Indicators + exact settings: **None — no indicators at all.** "no indicators, no guessing, just price action and a Fibonacci tool on the 1 minute chart" [0:04–0:10]; "that's it, no indicators, no magic settings" [1:01]. Tool = **Fibonacci retracement**, levels used: **0.382, 0.5, 0.618** (the 0.5–0.618 band is named the **"golden zone" / "gold zone"**) [1:10–1:36]. He also has **Fibonacci extensions** configured for optional trailing [6:08–6:13]. His exact Fib tool settings are **shown on screen only** [6:15–6:24], never spoken.
+- Setup/context required: A **short-term / micro trend** on the 1m: downtrend = **lower highs forming**; uptrend = **higher lows forming** [1:50–1:57]. Then a **break of structure** must occur [1:57–2:01].
+- Entry trigger: After the break of structure, **draw the Fib from the last swing extreme of the move that broke structure to the start of the retracement** — "draw from the last lower high in a downtrend past the break to the start of the retracement" [2:04–2:12]; on chart he does it "from the top of that move to the bottom of the move" wick-to-wick implied [3:18–3:20]. **Enter when price returns to the 0.5–0.618 gold zone, in the direction of the trend** [2:12–2:20]. Limit order is allowed: "you can even split the difference and put a limit order" [3:25–3:29]. **Preferred entry = the 0.618** — "ideally you want to enter in on the 618 because it's going to give you the best risk-to-reward ratio" [3:41–3:46]; repeated [4:21–4:24].
+- Stop loss: **At the 1.0 Fib level** — "your stop loss is at the one level" [3:29–3:31] (i.e. the origin of the impulse / the swing extreme).
+- Take profit: **The previous swing low in a downtrend, previous swing high in an uptrend** [2:20–2:24, 2:41–2:44, 3:31–3:33]. He states the resulting R: "this will always give you above a 1:1 risk-to-reward and it'll usually end up being a **1:1.5**" [3:33–3:41]; repeated "you're getting 1 to 1.5 risk-to-rewards" [4:25–4:28]. Optional: **Fibonacci extensions for a trailing stop** if riding momentum [6:08–6:15].
+- Filters he adds: **Trade with the current micro trend** [2:33]. **"If the momentum stalls or you're trading the wrong time, get out"** [2:44–2:50] — the "wrong time" is never defined (no session given). **Regime-flip rule (mechanical and notable): after a stop-out, flip bias** — "in order to do this strategy you will have losing trades but that's a good thing because it is your signal to let you know that you should be looking for the opposite positions… if you are going short in a downtrend you are now looking for long positions" [5:05–5:22]; demonstrated at [5:41–6:01]. **Repeat rule:** mark up every break of structure and take every one; if price never retraces to the Fib zone, skip it and mark the next BOS [4:12–4:50]. Expected holding time: **"the trades close usually within 10 to 15 minutes"** [4:28–4:31]; some in 2 minutes [5:34–5:36].
+
+## Vague / untestable / chart-pointed claims
+- [2:56–3:11] Trend line drawing is discretionary: "once price starts a trend and rejects at a specific level you can already start drawing your trend line, once price rejects the trend line that's where you want to start. This right here is known as a break of structure" — **the BOS definition is delivered by pointing at the chart**; whether "break of structure" means a candle CLOSE beyond the prior swing point, or just a wick, is never stated in this video. (He states the close-based version in EJDUexo_uSM.)
+- [2:12] "the start of the retracement" as the second Fib anchor is ambiguous vs. the wick-to-wick convention he gives in CpSLTA9BXjc/H7qwIiO4YuE.
+- [2:46–2:50] "if you're trading the wrong time, get out" — no session, no hours, no timezone given anywhere in the video. This is a real gap for a 1m strategy.
+- [3:46–4:00] "the reason why my price target is so low is because I'm skeptical and I'm always assuming a double bottom will form" — discretionary target-shortening.
+- [4:38–4:41] "sometimes momentum carries and it won't retrace to a fib level, that's fine" — no maximum-wait / expiry rule for the limit order.
+- [6:15–6:24] Fib tool settings ("here are my settings") are on-screen only — **frame-check required** for the exact level list and extension levels.
+- [5:22–5:32] Result claim: "if you took all of these trades in this downtrend you were up 6% losing one taking you down 1% with a total profit of 5%" — implies **1% risk per trade** but never states it as a rule; chart-pointed, no trade log.
+
+## Testability
+- rating: MEDIUM (levels, entry band, stop and target are all fully specified numerically; the two gaps are the BOS definition and the undefined "wrong time" session filter)
+- overlap: fib-scalp ; market-structure/BOS ; (closely related to CpSLTA9BXjc and H7qwIiO4YuE — same gold-zone family, different anchoring emphasis)
+- notable quotes:
+  - [2:31–2:44] "only trade on the one minute chart, trade with the current micro trend, wait for a break of structure, only enter on the 0.5 or 618 retracement, exit at the previous swing low in a downtrend and swing high in an uptrend"
+  - [3:29–3:41] "your stop loss is at the one level and your take-profit is at the previous swing low; this will always give you above a 1:1 risk-to-reward and it'll usually end up being a 1:1.5"
+  - [5:11–5:22] "[a loss] is your signal to let you know that you should be looking for the opposite positions"
