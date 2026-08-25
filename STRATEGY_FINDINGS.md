@@ -245,3 +245,48 @@ program — two assets, both years, OOS-confirmed, net of realistic maker fees.
 Still fragile: single timeframe band, decaying edge, t-stats only 1.2-1.7 on
 the yr2 halves, and the maker-fill model ignores queue position. If anything
 ever graduates to a paper-trading bot from this program, it's this config.
+
+## Addendum 2026-08-26: FULL TheMovingAverage channel mined — verdict on every strategy he teaches
+
+Entire channel enumerated (407 videos + 743 shorts + 34 streams; shorts/streams
+skipped as clip-derivatives), 166 strategy-relevant videos transcribed and
+rule-extracted by Opus subagents into `research/tma_channel/videos/`, every
+mechanical family backtested on 2y BTC (build) + ETH (OOS) + SOL, Binance
+USDT-perp fees, honest maker fills, no-lookahead pivots. Full write-up:
+`research/tma_channel/SYNTHESIS.md`; scripts in `research/tma_channel/backtests/`.
+
+**Every standalone family he teaches is DEAD on crypto net of fees**: fib
+golden-zone (his most-repeated), SMMA 21/50/200 flagship scalp, three-line
+strike, Heikin-Ashi no-wick, hidden divergence (re-confirmed), SuperTrend
+(fails OOS), StochRSI, RSI band-rejoin, SMMA200 retest, session ORB, his own
+MT4 bots' entries, and the Tokyo-range fade (a genuine forex edge that simply
+doesn't port — crypto has no quiet Tokyo session). ~25 videos gate their entry
+on closed-source paid indicators (untestable by construction). Day-of-week
+filters (no-Monday, Tue/Wed/Thu) failed placebo tests → rejected.
+
+**The one survivor and one genuine improvement:** the already-live regdiv 30m
+config, plus his "London open → NY close only" session rule (entries
+07:00-21:00 UTC). BTC +0.25%/trade net (positive BOTH years — the unfiltered
+baseline's yr2 is negative), ETH +0.50%, robust to window +/-2h, offset
+0-20bp, TP 1.5-3R, both trade sides; portfolio max-DD drops 24.4% -> 16.9%.
+SOL still negative. 1h still dead. Edge still decaying ~50%/yr.
+
+**Honest correction to the 2026-08-24 numbers:** re-implementing the incumbent
+exactly per `paper_regdiv.py` on fresh 2y data gives BTC +0.07%/trade (yr2
+NEGATIVE) and ETH +0.59% - materially weaker than the +0.55%/+1.19% logged
+from the (uncommitted) grid script. The paper bot is the arbiter; treat these
+lower numbers as the standing estimate. ETH carries the edge.
+
+**$1000 projection (best config: regdiv 30m BTC+ETH + sess filter, half
+notional per trade, 1x, compounding):** 2y backtest 1000 -> 1767 USDT (+77%),
+split +49.8% yr1 / +17.9% yr2, max DD ~17%, worst single trades -7.4% at 1x
+(any leverage beyond ~3x on full notional courts liquidation; 20x = death,
+unchanged). Forward-honest expectation = the decayed yr2 rate, ~+15-18%/yr
+(~150-180 USDT/yr on 1000), with real odds the edge keeps decaying to zero.
+No leverage-fueled shortcut exists in this data.
+
+**Proposed (NOT launched) paper-bot change:** add `SESS_UTC=7-21` entry-hour
+gate to `paper_regdiv.py` (skip signal bars outside 07:00-21:00 UTC; manage
+open positions unchanged). One-line change, cuts the drawdown-heavy Asia-hours
+trades that made BTC yr2 negative. Owner to approve before touching the live
+paper bot.
