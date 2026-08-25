@@ -30,7 +30,9 @@ rsiV = ta.rsi(close, 14)
 ma21 = ta.rma(close, 21)
 
 plot(rsiV, "RSI 14", color=color.yellow)
-hline(70, color=color.gray), hline(50, color=color.new(color.gray, 50)), hline(30, color=color.gray)
+hline(70, color=color.gray)
+hline(50, color=color.new(color.gray, 50))
+hline(30, color=color.gray)
 plot(ma21, "SMMA 21", color=color.orange, force_overlay=true)
 
 ph = ta.pivothigh(high, 3, 3)
@@ -76,9 +78,13 @@ if not na(ph)
                         array.push(pdBar, bar_index)
                         array.push(pdImm, close < ma21 ? 1 : 0)
                 done := true
-    array.push(phBar, j), array.push(phPx, ph), array.push(phRsi, rsiV[3])
+    array.push(phBar, j)
+    array.push(phPx, ph)
+    array.push(phRsi, rsiV[3])
     if array.size(phBar) > 8
-        array.shift(phBar), array.shift(phPx), array.shift(phRsi)
+        array.shift(phBar)
+        array.shift(phPx)
+        array.shift(phRsi)
 
 if not na(pl)
     j = bar_index - 3
@@ -101,9 +107,13 @@ if not na(pl)
                         array.push(pdBar, bar_index)
                         array.push(pdImm, close > ma21 ? 1 : 0)
                 done := true
-    array.push(plBar, j), array.push(plPx, pl), array.push(plRsi, rsiV[3])
+    array.push(plBar, j)
+    array.push(plPx, pl)
+    array.push(plRsi, rsiV[3])
     if array.size(plBar) > 8
-        array.shift(plBar), array.shift(plPx), array.shift(plRsi)
+        array.shift(plBar)
+        array.shift(plPx)
+        array.shift(plRsi)
 
 // process pending entries (touch of PREVIOUS bar's SMMA21, matching ma21[jj-1])
 if array.size(pdDir) > 0
@@ -131,6 +141,9 @@ if array.size(pdDir) > 0
                 line.new(bar_index, ext, bar_index + 20, ext, color=color.red, style=line.style_dashed, force_overlay=true)
                 line.new(bar_index, tp,  bar_index + 20, tp,  color=color.lime, style=line.style_dashed, force_overlay=true)
         if not na(entry) or expired
-            array.remove(pdDir, k), array.remove(pdExt, k), array.remove(pdBar, k), array.remove(pdImm, k)
+            array.remove(pdDir, k)
+            array.remove(pdExt, k)
+            array.remove(pdBar, k)
+            array.remove(pdImm, k)
         else
             k += 1
