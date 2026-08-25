@@ -392,3 +392,44 @@ the band-edge (5m BTC negative) mirrors the fragility pattern of every
 prior config. Verdict: strongest paper candidate of the whole program after
 the incumbent; belongs in the paper bot as a tagged B-strategy so live data
 can adjudicate. NOT a replacement for the incumbent yet.
+
+### Follow-up 2026-08-26 (5): detector audit — matching Arty's ACTUAL method
+
+Owner correctly suspected the backtest detector differs from how the videos
+find divergences. Confirmed by re-reading the three definitive videos
+(VwVEVu0-JWQ, 3APFZa1AQNw, udwkldark34):
+- He spots swings ON THE RSI first ("my eye always goes to the RSI"), then
+  reads price; my detector finds PRICE fractal pivots and reads RSI there.
+- He connects ADJACENT prominent swings; my implementation pairs each new
+  pivot with the OLDEST stored pivot within 60 bars (quirk), skipping peaks.
+
+Built a faithful Arty-style detector (arty_div.py: RSI-series fractal 3/3
+swings, adjacent pairs, price extreme +/-2 bars around each RSI pivot,
+optional 70/30 out-then-back qualifier) and re-ran everything:
+
+| config (15m/30m as before) | my detector | HIS detector |
+|---|---|---|
+| hidden + touch21, BTC 15m | +0.29%/tr | **-0.05%/tr DEAD** |
+| hidden + touch21, ETH 15m | +0.56%/tr | **-0.03%/tr DEAD** |
+| regular + confluences + sess, BTC 30m | +0.25%/tr | +0.01% (yr1 -0.34) |
+| regular + confluences + sess, ETH 30m | +0.50%/tr | **-0.26%/tr DEAD** |
+| regular + 70/30 secret sauce + touch, BTC | — | +0.13%/tr, BOTH yrs + (48% win, t=1.3) |
+| regular + 70/30 secret sauce + touch, ETH | — | +0.07%/tr (yr1 neg) |
+| hidden + 70/30 qualifier | — | n=0 (logically impossible - the filter only applies to regular, as his video states) |
+
+Conclusions:
+1. **His authentic method mostly LOSES on crypto.** Every profitable config
+   of this program rides on the mechanical variant I coded (price-fractal
+   pivots, far divergence extreme as SL), NOT on his visual method. The far
+   SL anchor (the thing his adjacent-swing method removes) appears to be a
+   load-bearing part of the edge - wide structural stops that rarely get
+   swept.
+2. The ONE his-exact-method config in the green is his true signature trade:
+   regular divergence + "first divergence out of the 70/30 range" + entry on
+   return: BTC +0.13%/tr net, positive both years, 48% win rate - real but
+   thin (about half the B-strategy's edge).
+3. Meta-lesson logged: two reasonable formalizations of the same YouTube
+   strategy produce opposite signs. "Backtested his strategy" is always
+   really "backtested one formalization" - and raises the data-mining
+   caution on our positive results another notch. The paper bot remains the
+   arbiter.
