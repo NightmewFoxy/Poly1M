@@ -50,7 +50,7 @@ STRATS = {
     "LOS-15m": {"interval": "15m", "bar_ms": 15 * 60 * 1000, "tv_iv": "15"},
     "SWING-30m": {"interval": "30m", "bar_ms": 30 * 60 * 1000, "tv_iv": "30"},
 }
-TV_LAYOUT = "https://www.tradingview.com/chart/nhgPREcq/"
+TV_LAYOUT = "https://www.tradingview.com/chart/CHgKFG9K/"   # dedicated clean "TMA Bot" layout
 
 
 def tv_link(strat, sym):
